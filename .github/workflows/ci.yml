@@ -22,4 +22,10 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: flutter test
-      - run: flutter analyze
+      - run: |
+          flutter analyze > analyze_output.txt 2>&1 || true
+          cat analyze_output.txt
+          head -n 50 analyze_output.txt | while IFS= read -r line; do
+            echo "::warning::$line"
+          done
+          flutter analyze
