@@ -22,4 +22,4 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: flutter test
-      - run: dart analyze
+      - run: flutter analyze
