@@ -1,3 +1,5 @@
+__pycache__/
+*.pyc
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
