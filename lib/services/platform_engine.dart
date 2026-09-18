@@ -136,7 +136,6 @@ class WindowsEngine {
   String endpoint = '';
   String protocol = '';
   String? _originalGw;
-  String? _originalIf;
   int _socksPort = 1819;
   bool _bypassLan = true;
   final _bypass = <String>{};
@@ -315,7 +314,6 @@ class WindowsEngine {
     final m = re.firstMatch(text);
     if (m != null) {
       _originalGw = m.group(1);
-      _originalIf = m.group(2);
     }
   }
 
