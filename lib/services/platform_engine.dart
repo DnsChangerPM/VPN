@@ -648,7 +648,7 @@ class WindowsEngine {
       if (attempt.ok) {
         tunBackend = backend.label;
         _logLine(
-            'device VPN: ${backend.label} up on "${tunAdapter}" (#$tunIndex)');
+            'device VPN: $backend.label up on "$tunAdapter" (#$tunIndex)');
         return true;
       }
       failures.add(TunFailure(backend, attempt.reason));
@@ -849,7 +849,7 @@ class WindowsEngine {
         ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5', 'if', '$tunIndex'],
         ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'if', '$tunIndex'],
       ),
-      _RouteForm(
+      const _RouteForm(
         ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5'],
         ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp],
       ),
