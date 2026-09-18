@@ -9,6 +9,7 @@ import '../models/engine_state.dart';
 import '../models/settings.dart';
 import 'aether_args.dart';
 import 'socks_probe.dart';
+import 'windows_proxy.dart';
 
 class PlatformEngine {
   static const _channel = MethodChannel('nimbus.vpn/engine');
@@ -137,7 +138,11 @@ class PlatformEngine {
 /// waits for a real SOCKS5 handshake, proves the data plane, then puts a
 /// WinTUN + tun2socks full-device tunnel in front when running elevated.
 class WindowsEngine {
-  WindowsEngine._();
+  WindowsEngine._() {
+    // Proxy changes are visible in the same live log as the core's output.
+    WindowsSystemProxy.instance.onLog = (line) => _logs.add(line);
+  }
+
   static final instance = WindowsEngine._();
 
   Process? _aether;
@@ -276,30 +281,49 @@ class WindowsEngine {
       return;
     }
 
-    if (settings.mode == ConnectionMode.vpn) {
-      final admin = await isAdmin();
-      if (!admin) {
-        // Honest degradation: proxy works, but no VPN was requested. Tell the
-        // user exactly what to do instead of silently lying about a TUN.
-        phase = EnginePhase.connected;
-        message = 'SOCKS5 127.0.0.1:$_socksPort — restart as Administrator for full VPN';
-        _emit();
-        return;
-      }
-      final ok = await _startTun(exeDir, settings);
-      if (!ok) {
-        phase = EnginePhase.connected;
-        message = lastError.isEmpty
-            ? 'SOCKS5 127.0.0.1:$_socksPort (TUN failed)'
-            : lastError;
-        _emit();
-        return;
-      }
+    // The tunnel is proven. From here on the Windows system proxy follows
+    // the app's on/off state: snapshot whatever the user had, then take it
+    // (proxy mode) or give it back (device VPN — with a stale manual proxy
+    // active, WinINET apps would shortcut the tunnel through the raw SOCKS
+    // listener, so a full device VPN must run proxy-free).
+    final proxy = WindowsSystemProxy.instance;
+    await proxy.rememberOriginal();
+
+    if (settings.mode == ConnectionMode.proxy) {
+      await proxy.enableOurs(_socksPort);
+      phase = EnginePhase.connected;
+      message = 'SOCKS5 127.0.0.1:$_socksPort — system proxy on';
+      _emit();
+      return;
     }
+
+    final admin = await isAdmin();
+    if (!admin) {
+      // Honest degradation: no TUN without elevation, so the system proxy
+      // is what keeps the machine tunneled. Tell the user exactly what to
+      // do instead of silently lying about a TUN.
+      await proxy.enableOurs(_socksPort);
+      phase = EnginePhase.connected;
+      message = 'SOCKS5 127.0.0.1:$_socksPort (system proxy) — restart as Administrator for full VPN';
+      _emit();
+      return;
+    }
+    final ok = await _startTun(exeDir, settings);
+    if (!ok) {
+      await proxy.enableOurs(_socksPort);
+      phase = EnginePhase.connected;
+      message = lastError.isEmpty
+          ? 'SOCKS5 127.0.0.1:$_socksPort (TUN failed, system proxy on)'
+          : '$lastError — system proxy on';
+      _emit();
+      return;
+    }
+    // Full device tunnel: every app rides the TUN adapter directly, so the
+    // system proxy goes back to off — no proxy to set, everything through
+    // the VPN device.
+    await proxy.clearOurs();
     phase = EnginePhase.connected;
-    message = settings.mode == ConnectionMode.vpn
-        ? 'System VPN active'
-        : 'SOCKS5 127.0.0.1:$_socksPort';
+    message = 'System VPN active';
     _emit();
   }
 
@@ -332,6 +356,10 @@ class WindowsEngine {
       aether?.kill(ProcessSignal.sigkill);
     } catch (_) {}
     await _restoreRoutes();
+    // Disconnect means proxy flow stops too: hand the system proxy back to
+    // whatever it was before Nimbus, so the machine is left direct (or with
+    // the user's own proxy) instead of pointing at a dead listener.
+    await WindowsSystemProxy.instance.restore(ourPort: _socksPort);
     phase = EnginePhase.disconnected;
     message = '';
     endpoint = '';

@@ -13,6 +13,7 @@ import 'aether_args.dart';
 import 'platform_engine.dart';
 import 'socks_probe.dart';
 import 'update_service.dart';
+import 'windows_proxy.dart';
 
 class VpnController extends ChangeNotifier {
   VpnController();
@@ -63,6 +64,11 @@ class VpnController extends ChangeNotifier {
     _events = engine.events().listen(_onEvent, onError: (_) {});
     if (Platform.isWindows) {
       _winLogs = WindowsEngine.instance.logs.listen((line) => _log(line));
+      // Self-heal: a run that ended hard (window closed, crash) cannot
+      // clean up after itself, so it may leave the system proxy pointing at
+      // our dead listener. Undo any leftover that is unambiguously ours.
+      unawaited(WindowsSystemProxy.instance.restore(
+          ourPort: settings.socksPort));
     }
     unawaited(engine.installedApps().then((list) {
       apps
@@ -487,6 +493,12 @@ class VpnController extends ChangeNotifier {
     _statsTimer?.cancel();
     _clock?.cancel();
     _watchdogTimer?.cancel();
+    // Windows: if the app goes away while the tunnel is still up, stop the
+    // engine too — kills aether.exe, restores the routes and hands the
+    // system proxy back the way we found it.
+    if (Platform.isWindows && (snapshot.isActive || busy)) {
+      unawaited(WindowsEngine.instance.stop());
+    }
     super.dispose();
   }
 }
