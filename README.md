@@ -25,13 +25,20 @@ Nimbus is **not** affiliated with CluvexStudio. Aether is a separate project wit
 
 ### Download
 
-Run the **Release APK and EXE** workflow (Actions → *Run workflow*) or push a `v*` tag. The job publishes:
+GitHub Actions → **Release APK and EXE** → **Run workflow**. The form asks for:
+
+- **App version** (required, example `1.2.0`) — this is the version baked into the APK/EXE and the GitHub Release tag
+- **Release notes** (optional)
+- **Pre-release** (optional)
+
+Pushing a `v1.2.0` tag also publishes. Artifacts:
 
 - `Nimbus-VPN-vX.Y.Z-Android-Universal.apk`
 - `Nimbus-VPN-vX.Y.Z-Windows-x64-Installer.exe`
+- `Nimbus-VPN-vX.Y.Z-Windows-x64-Portable.zip`
 - `SHA256SUMS.txt`
 
-to [Releases](https://github.com/DnsChangerPM/VPN/releases).
+The in-app updater downloads these files, checks SHA-256 when GitHub provides a digest, and hands the APK/EXE to the system installer.
 
 The in-app updater reads:
 
@@ -71,7 +78,7 @@ Smart Connect tries MASQUE H3 → MASQUE H2 → WireGuard → gool → MASQUE×2
 - اتصال هوشمند، MASQUE، WireGuard، gool، MASQUE×2
 - اطلاع‌رسانی به‌روزرسانی از GitHub Releases همین مخزن
 
-برای ساخت APK و EXE: در GitHub Actions ورک‌فلو **Release APK and EXE** را Run کنید. فایل‌ها در Releases ظاهر می‌شوند.
+برای ساخت APK و EXE: در GitHub Actions ورک‌فلو **Release APK and EXE** را Run کنید. قبل از اجرا **نسخه برنامه** (مثلاً `1.0.0`) از شما پرسیده می‌شود. فایل‌ها در Releases ظاهر می‌شوند.
 
 ---
 

@@ -3,11 +3,15 @@ package pm.dnschanger.nimbus
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
 object NimbusPlugin {
@@ -55,6 +59,32 @@ object NimbusPlugin {
                 "status" -> result.success(mapOf("phase" to "unknown"))
                 "listApps" -> result.success(listApps(activity))
                 "recover" -> result.success(null)
+                "installApk" -> {
+                    val path = (call.arguments as? Map<*, *>)?.get("path")?.toString()
+                    if (path.isNullOrBlank()) {
+                        result.error("path", "missing apk path", null)
+                    } else {
+                        installApk(activity, path)
+                        result.success(true)
+                    }
+                }
+                "openBattery" -> {
+                    try {
+                        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                        activity.startActivity(intent)
+                    } catch (_: Exception) {
+                        activity.startActivity(Intent(Settings.ACTION_SETTINGS))
+                    }
+                    result.success(null)
+                }
+                "openVpnSettings" -> {
+                    try {
+                        activity.startActivity(Intent("android.net.vpn.SETTINGS"))
+                    } catch (_: Exception) {
+                        activity.startActivity(Intent(Settings.ACTION_SETTINGS))
+                    }
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -92,6 +122,18 @@ object NimbusPlugin {
         }
         vpnResult = result
         activity.startActivityForResult(intent, 24)
+    }
+
+    private fun installApk(activity: Activity, path: String) {
+        val file = File(path)
+        val uri = if (Build.VERSION.SDK_INT >= 24) {
+            FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
+        } else {
+            Uri.fromFile(file)
+        }
+        val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.startActivity(intent)
     }
 
     private fun listApps(activity: Activity): List<Map<String, String>> {

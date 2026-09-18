@@ -72,6 +72,28 @@ class PlatformEngine {
     }
   }
 
+  Future<void> installUpdate(String path) async {
+    if (Platform.isAndroid) {
+      await _channel.invokeMethod('installApk', {'path': path});
+      return;
+    }
+    if (Platform.isWindows) {
+      await Process.start(path, const [], runInShell: true);
+    }
+  }
+
+  Future<void> openBatterySettings() async {
+    if (Platform.isAndroid) {
+      await _channel.invokeMethod('openBattery');
+    }
+  }
+
+  Future<void> openSystemVpnSettings() async {
+    if (Platform.isAndroid) {
+      await _channel.invokeMethod('openVpnSettings');
+    }
+  }
+
   Future<bool> isElevated() async {
     if (Platform.isAndroid) return true;
     if (Platform.isWindows) return WindowsEngine.instance.isAdmin();

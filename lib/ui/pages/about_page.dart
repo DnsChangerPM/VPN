@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../app_info.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/nimbus_theme.dart';
 
@@ -23,7 +24,13 @@ class AboutPage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(s.appName, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-              Text('v${controller.update?.current ?? '1.0.0'} · Aether ${controller.snapshot.protocol.isEmpty ? '2.0.0' : controller.snapshot.protocol}',
+              Text(
+                'v${controller.update?.current ?? AppInfo.version} · Aether ${AppInfo.core}',
+                style: const TextStyle(color: NimbusColors.muted),
+              ),
+              const SizedBox(height: 8),
+              Text(s.freeNote,
+                  textAlign: TextAlign.center,
                   style: const TextStyle(color: NimbusColors.muted)),
             ],
           ),

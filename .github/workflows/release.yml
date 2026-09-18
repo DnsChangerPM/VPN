@@ -2,6 +2,22 @@ name: Release APK and EXE
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "App version to build and publish (example: 1.0.0). Required before the workflow starts."
+        required: true
+        type: string
+        default: "1.0.0"
+      notes:
+        description: "Release notes shown on GitHub Releases and in the in-app updater"
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark this GitHub Release as a pre-release"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -24,15 +40,38 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      notes: ${{ steps.v.outputs.notes }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
       - id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_NOTES: ${{ github.event.inputs.notes }}
+          INPUT_PRE: ${{ github.event.inputs.prerelease }}
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${INPUT_VERSION:-}"
+            NOTES="${INPUT_NOTES:-}"
+            PRE="${INPUT_PRE:-false}"
+          else
             VERSION="${GITHUB_REF_NAME#v}"
+            NOTES=""
+            PRE="false"
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          VERSION="${VERSION#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 1.0.0 (got '$VERSION')"
+            exit 1
+          fi
+          {
+            echo "version=${VERSION}"
+            echo "prerelease=${PRE}"
+            echo "notes<<EOF"
+            echo "${NOTES}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building Nimbus VPN v${VERSION}"
 
   android:
     needs: version
@@ -55,6 +94,8 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Stamp version
+        run: python3 scripts/stamp_version.py "${{ needs.version.outputs.version }}"
       - name: Scaffold Android platform
         run: flutter create . --project-name nimbus --org pm.dnschanger --platforms=android
       - name: Apply overlays
@@ -76,7 +117,9 @@ jobs:
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/.android-signing/nimbus.jks
             export ANDROID_KEYSTORE_PATH="$GITHUB_WORKSPACE/android/.android-signing/nimbus.jks"
           fi
-          flutter build apk --release --target-platform android-arm,android-arm64,android-x64
+          flutter build apk --release \
+            --target-platform android-arm,android-arm64,android-x64 \
+            --dart-define=NIMBUS_VERSION=${{ needs.version.outputs.version }}
           mkdir -p release
           cp build/app/outputs/flutter-apk/app-release.apk \
             "release/Nimbus-VPN-v${{ needs.version.outputs.version }}-Android-Universal.apk"
@@ -95,6 +138,8 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Stamp version
+        run: python scripts/stamp_version.py "${{ needs.version.outputs.version }}"
       - name: Scaffold Windows platform
         run: flutter create . --project-name nimbus --org pm.dnschanger --platforms=windows
       - name: Apply overlays
@@ -103,7 +148,7 @@ jobs:
         shell: bash
         run: bash scripts/fetch_cores.sh windows
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release --dart-define=NIMBUS_VERSION=${{ needs.version.outputs.version }}
       - name: Stage sidecars
         shell: pwsh
         run: |
@@ -111,6 +156,8 @@ jobs:
           if (-not (Test-Path $out)) { $out = "build\windows\runner\Release" }
           Copy-Item third_party\windows\* $out -Force
           New-Item -ItemType Directory -Force release | Out-Null
+          $ver = "${{ needs.version.outputs.version }}"
+          Compress-Archive -Path "$out\*" -DestinationPath "release\Nimbus-VPN-v$ver-Windows-x64-Portable.zip" -Force
           echo "OUT=$out" >> $env:GITHUB_ENV
       - name: Install Inno Setup
         run: choco install innosetup -y
@@ -125,7 +172,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.zip
 
   publish:
     needs: [version, android, windows]
@@ -138,29 +187,38 @@ jobs:
       - name: Checksums and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES_BODY: ${{ needs.version.outputs.notes }}
         run: |
           set -euo pipefail
           VERSION="${{ needs.version.outputs.version }}"
           TAG="v${VERSION}"
+          PRE="${{ needs.version.outputs.prerelease }}"
           mkdir -p release
-          find dist -type f \( -name '*.apk' -o -name '*.exe' \) -exec cp {} release/ \;
+          find dist -type f \( -name '*.apk' -o -name '*.exe' -o -name '*.zip' \) -exec cp {} release/ \;
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
+          USER_NOTES="${NOTES_BODY:-}"
           NOTES=$(cat <<EOF
           ## Nimbus VPN v${VERSION}
 
           Independent Flutter client for [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) **${AETHER_TAG}**.
 
+          ${USER_NOTES}
+
           ### Downloads
           - \`Nimbus-VPN-v${VERSION}-Android-Universal.apk\` — Android 7.0 (API 24) and newer
           - \`Nimbus-VPN-v${VERSION}-Windows-x64-Installer.exe\` — Windows 8.1 through 11 (x64)
+          - \`Nimbus-VPN-v${VERSION}-Windows-x64-Portable.zip\` — portable Windows build
 
-          In-app updates read this GitHub Releases endpoint.
+          The in-app updater reads this GitHub Release.
 
           EOF
           )
+          PREFLAG=()
+          if [[ "$PRE" == "true" ]]; then PREFLAG=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
+            gh release edit "$TAG" --title "Nimbus VPN v${VERSION}" --notes "$NOTES" ${PREFLAG[@]+"${PREFLAG[@]}"}
           else
-            gh release create "$TAG" release/* --title "Nimbus VPN v${VERSION}" --notes "$NOTES"
+            gh release create "$TAG" release/* --title "Nimbus VPN v${VERSION}" --notes "$NOTES" ${PREFLAG[@]+"${PREFLAG[@]}"}
           fi

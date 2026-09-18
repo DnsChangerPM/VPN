@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/engine_state.dart';
 import '../../services/vpn_controller.dart';
@@ -49,21 +50,34 @@ class ConnectPage extends StatelessWidget {
           Material(
             color: const Color(0xFF163149),
             child: InkWell(
-              onTap: c.openUpdate,
+              onTap: c.downloadUpdate,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(
+                child: Column(
                   children: [
-                    const Icon(Icons.system_update_alt, color: NimbusColors.cyan),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${s.updateAvailable}: v${c.update!.latest}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                    Row(
+                      children: [
+                        const Icon(Icons.system_update_alt, color: NimbusColors.cyan),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '${s.updateAvailable}: v${c.update!.latest}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        Text(
+                          c.downloading
+                              ? s.downloading
+                              : s.downloadUpdate,
+                          style: const TextStyle(color: NimbusColors.cyan),
+                        ),
+                      ],
                     ),
-                    Text(s.downloadUpdate,
-                        style: const TextStyle(color: NimbusColors.cyan)),
+                    if (c.downloading)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: LinearProgressIndicator(value: c.downloadProgress),
+                      ),
                   ],
                 ),
               ),
@@ -86,9 +100,24 @@ class ConnectPage extends StatelessWidget {
           textAlign: TextAlign.center,
           style: const TextStyle(color: NimbusColors.muted),
         ),
-        const SizedBox(height: 18),
+        if (snap.connectedAt != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              '${s.duration}: ${_uptime(snap.connectedAt!)}',
+              style: const TextStyle(color: NimbusColors.muted, fontSize: 12),
+            ),
+          ),
+        TextButton(
+          onPressed: () {
+            Clipboard.setData(const ClipboardData(text: '127.0.0.1:1819'));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(s.copied)));
+          },
+          child: Text(s.copyProxy),
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
           child: Row(
             children: [
               _metric(s.download, _fmt(snap.downloadBytes)),
@@ -98,11 +127,12 @@ class ConnectPage extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(bottom: 24),
+          padding: const EdgeInsets.only(bottom: 20),
           child: Text(
             snap.location.isEmpty
-                ? (snap.ip.isEmpty ? '' : snap.ip)
+                ? (snap.ip.isEmpty ? s.freeNote : snap.ip)
                 : '${s.location}: ${snap.location}  ${snap.ip}',
+            textAlign: TextAlign.center,
             style: const TextStyle(color: NimbusColors.muted, fontSize: 13),
           ),
         ),
@@ -132,5 +162,13 @@ class ConnectPage extends StatelessWidget {
       i++;
     }
     return '${v.toStringAsFixed(v >= 10 || i == 0 ? 0 : 1)} ${units[i]}';
+  }
+
+  String _uptime(DateTime start) {
+    final d = DateTime.now().difference(start);
+    final h = d.inHours.toString().padLeft(2, '0');
+    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+    final sec = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$h:$m:$sec';
   }
 }

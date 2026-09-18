@@ -49,6 +49,17 @@ class SettingsPage extends StatelessWidget {
             c.persist();
           },
         ),
+        ListTile(
+          title: Text(s.battery),
+          subtitle: Text(s.batteryHelp),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => c.engine.openBatterySettings(),
+        ),
+        ListTile(
+          title: Text(s.vpnSettings),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => c.engine.openSystemVpnSettings(),
+        ),
         const Divider(height: 32),
         Text(s.updates, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
         SwitchListTile(
@@ -102,10 +113,15 @@ class SettingsPage extends StatelessWidget {
           child: Text(s.checkUpdates),
         ),
         const SizedBox(height: 8),
+        if (c.downloading)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: LinearProgressIndicator(value: c.downloadProgress),
+          ),
         if (u?.available == true)
           FilledButton.tonal(
-            onPressed: c.openUpdate,
-            child: Text(s.downloadUpdate),
+            onPressed: c.downloadUpdate,
+            child: Text(c.downloading ? s.downloading : s.downloadUpdate),
           ),
         TextButton(
           onPressed: () => launchUrl(

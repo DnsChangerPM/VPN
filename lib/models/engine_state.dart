@@ -88,6 +88,8 @@ class UpdateInfo {
     this.notes = '',
     this.apkUrl,
     this.exeUrl,
+    this.apkSha256,
+    this.exeSha256,
     this.htmlUrl,
     this.available = false,
   });
@@ -97,6 +99,13 @@ class UpdateInfo {
   final String notes;
   final String? apkUrl;
   final String? exeUrl;
+  final String? apkSha256;
+  final String? exeSha256;
   final String? htmlUrl;
   final bool available;
+
+  String? get platformUrl {
+    // Resolved by callers that know the OS.
+    return apkUrl ?? exeUrl;
+  }
 }

@@ -24,10 +24,15 @@ class VpnController extends ChangeNotifier {
   EngineSnapshot snapshot = const EngineSnapshot();
   UpdateInfo? update;
   final logs = <LogLine>[];
+  final apps = <Map<String, String>>[];
   bool busy = false;
+  bool downloading = false;
+  double downloadProgress = 0;
+  String? downloadedPath;
   String? toast;
   Timer? _updateTimer;
   Timer? _statsTimer;
+  Timer? _clock;
   StreamSubscription? _events;
   StreamSubscription? _winLogs;
 
@@ -51,6 +56,12 @@ class VpnController extends ChangeNotifier {
     if (Platform.isWindows) {
       _winLogs = WindowsEngine.instance.logs.listen((line) => _log(line));
     }
+    unawaited(engine.installedApps().then((list) {
+      apps
+        ..clear()
+        ..addAll(list);
+      notifyListeners();
+    }));
     notifyListeners();
     unawaited(refreshUpdate());
     _updateTimer = Timer.periodic(const Duration(hours: 12), (_) {
@@ -76,11 +87,44 @@ class VpnController extends ChangeNotifier {
   Future<void> openUpdate() async {
     final info = update;
     if (info == null) return;
-    final url = Platform.isAndroid
-        ? (info.apkUrl ?? info.htmlUrl)
-        : (info.exeUrl ?? info.htmlUrl);
-    if (url == null) return;
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    await downloadUpdate();
+    if (downloadedPath == null && info.htmlUrl != null) {
+      await launchUrl(Uri.parse(info.htmlUrl!), mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> downloadUpdate() async {
+    final info = update;
+    if (info == null || downloading) return;
+    final url = Platform.isAndroid ? info.apkUrl : info.exeUrl;
+    final sha = Platform.isAndroid ? info.apkSha256 : info.exeSha256;
+    if (url == null) {
+      if (info.htmlUrl != null) {
+        await launchUrl(Uri.parse(info.htmlUrl!), mode: LaunchMode.externalApplication);
+      }
+      return;
+    }
+    downloading = true;
+    downloadProgress = 0;
+    notifyListeners();
+    try {
+      final file = await updates.download(
+        url: url,
+        expectedSha256: sha,
+        onProgress: (p) {
+          downloadProgress = p;
+          notifyListeners();
+        },
+      );
+      downloadedPath = file.path;
+      await engine.installUpdate(file.path);
+    } catch (e) {
+      _log('update download failed: $e');
+      toast = '$e';
+    } finally {
+      downloading = false;
+      notifyListeners();
+    }
   }
 
   Future<void> toggle() async {
@@ -140,6 +184,10 @@ class VpnController extends ChangeNotifier {
               connectedAt: DateTime.now(),
             ));
             _startStats();
+            _clock?.cancel();
+            _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+              notifyListeners();
+            });
             return;
           }
           lastError = snapshot.message.isEmpty ? 'timeout' : snapshot.message;
@@ -160,6 +208,7 @@ class VpnController extends ChangeNotifier {
   Future<void> disconnect() async {
     busy = true;
     _statsTimer?.cancel();
+    _clock?.cancel();
     _set(snapshot.copyWith(phase: EnginePhase.disconnecting, message: s.disconnecting));
     try {
       await engine.stop();
@@ -228,7 +277,7 @@ class VpnController extends ChangeNotifier {
   void _onEvent(Map<String, dynamic> event) {
     final type = event['type']?.toString();
     if (type == 'log') {
-      _log('${event['line']}');
+      _log('${event['line'] ?? event['message'] ?? ''}');
       return;
     }
     if (type == 'status') {
@@ -278,6 +327,7 @@ class VpnController extends ChangeNotifier {
     _winLogs?.cancel();
     _updateTimer?.cancel();
     _statsTimer?.cancel();
+    _clock?.cancel();
     super.dispose();
   }
 }

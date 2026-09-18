@@ -110,4 +110,36 @@ class S {
   String get needAdmin => isFa
       ? 'برای VPN سراسری ویندوز، برنامه را به‌صورت Administrator اجرا کنید'
       : 'System-wide Windows VPN needs Administrator rights';
+  String get selectApps => isFa ? 'انتخاب برنامه‌ها' : 'Select applications';
+  String get searchApps => isFa ? 'جست‌وجوی برنامه‌ها' : 'Search applications';
+  String get selected => isFa ? 'انتخاب‌شده' : 'selected';
+  String get selectAll => isFa ? 'انتخاب همه' : 'Select all';
+  String get clearAll => isFa ? 'پاک کردن همه' : 'Clear all';
+  String get addExe => isFa ? 'افزودن مسیر برنامه' : 'Add executable path';
+  String get duration => isFa ? 'مدت اتصال' : 'Duration';
+  String get copyProxy => isFa ? 'کپی آدرس پروکسی' : 'Copy proxy address';
+  String get copied => isFa ? 'کپی شد' : 'Copied';
+  String get tun => isFa ? 'رابط TUN' : 'TUN interface';
+  String get exitIp => isFa ? 'آی‌پی خروجی' : 'Exit IP';
+  String get coreVersion => isFa ? 'هسته Aether' : 'Aether core';
+  String get tunnel => isFa ? 'تونل' : 'Tunnel';
+  String get refresh => isFa ? 'نوسازی' : 'Refresh';
+  String get downloading => isFa ? 'در حال دانلود…' : 'Downloading…';
+  String get install => isFa ? 'نصب' : 'Install';
+  String get verifying => isFa ? 'در حال بررسی صحت فایل…' : 'Verifying file…';
+  String get shaMismatch => isFa ? 'هش فایل مطابقت ندارد' : 'File hash mismatch';
+  String get lanAddress => isFa ? 'آدرس اشتراک LAN' : 'LAN listen address';
+  String get battery => isFa ? 'بهینه‌سازی باتری' : 'Battery optimization';
+  String get batteryHelp => isFa
+      ? 'برای اتصال پایدار، بهینه‌سازی باتری را برای Nimbus خاموش کنید'
+      : 'Disable battery optimization so the tunnel can stay up';
+  String get vpnSettings => isFa ? 'تنظیمات VPN سیستم' : 'System VPN settings';
+  String get scanTurbo => isFa ? 'سریع' : 'Turbo';
+  String get scanBalanced => isFa ? 'متعادل' : 'Balanced';
+  String get scanThorough => isFa ? 'عمیق' : 'Thorough';
+  String get scanStealth => isFa ? 'پنهان' : 'Stealth';
+  String get scanIronclad => isFa ? 'قطعی' : 'Ironclad';
+  String get freeNote => isFa
+      ? 'کاملاً رایگان و متن‌باز. بدون حساب کاربری و بدون محدودیت ترافیک.'
+      : 'Free and open source. No account and no traffic quota.';
 }

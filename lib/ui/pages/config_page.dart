@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/settings.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/nimbus_theme.dart';
+import 'app_picker_page.dart';
 
 class ConfigPage extends StatelessWidget {
   const ConfigPage({super.key, required this.controller});
@@ -36,20 +37,30 @@ class ConfigPage extends StatelessWidget {
           c.persist();
         }, wrap: true),
         _label(s.scan),
-        _dropdown(st.scan.name, ScanMode.values.map((e) => e.name).toList(), (v) {
-          st.scan = ScanMode.values.firstWhere((e) => e.name == v);
-          c.persist();
-        }),
+        _dropdown(
+          st.scan.name,
+          {
+            'turbo': s.scanTurbo,
+            'balanced': s.scanBalanced,
+            'thorough': s.scanThorough,
+            'stealth': s.scanStealth,
+            'ironclad': s.scanIronclad,
+          },
+          (v) {
+            st.scan = ScanMode.values.firstWhere((e) => e.name == v);
+            c.persist();
+          },
+        ),
         _label(s.obfuscation),
-        _dropdown(st.obfuscation, const [
-          'auto',
-          'firewall',
-          'gfw',
-          'balanced',
-          'aggressive',
-          'light',
-          'off',
-        ], (v) {
+        _dropdown(st.obfuscation, const {
+          'auto': 'auto',
+          'firewall': 'firewall',
+          'gfw': 'gfw',
+          'balanced': 'balanced',
+          'aggressive': 'aggressive',
+          'light': 'light',
+          'off': 'off',
+        }, (v) {
           st.obfuscation = v;
           c.persist();
         }),
@@ -148,6 +159,24 @@ class ConfigPage extends StatelessWidget {
           st.splitMode = SplitMode.values.firstWhere((e) => e.name == v);
           c.persist();
         }, wrap: true),
+        if (st.splitMode != SplitMode.off)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: OutlinedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AppPickerPage(controller: c),
+                ),
+              ),
+              child: Text('${s.selectApps}  (${st.splitApps.length} ${s.selected})'),
+            ),
+          ),
+        if (st.lanShare)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('${s.lanAddress}: 0.0.0.0:1819',
+                style: const TextStyle(color: NimbusColors.muted)),
+          ),
         const SizedBox(height: 18),
         OutlinedButton(
           onPressed: () {
