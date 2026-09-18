@@ -219,7 +219,9 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           $ver = "${{ needs.version.outputs.version }}"
           Compress-Archive -Path "$out\*" -DestinationPath "release\Nimbus-VPN-v$ver-Windows-x64-Portable.zip" -Force
-          echo "OUT=$out" >> $env:GITHUB_ENV
+          # Export an ABSOLUTE path: ISCC resolves relative Source paths against
+          # the script directory (scripts\), not the workspace root.
+          echo "OUT=$((Resolve-Path $out).Path)" >> $env:GITHUB_ENV
       - name: Install Inno Setup
         run: choco install innosetup -y
       - name: Build installer
@@ -228,7 +230,20 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           $ver = "${{ needs.version.outputs.version }}"
           $out = $env:OUT
-          & $iscc "/DMyAppVersion=$ver" "/DBuildDir=$out" scripts\nimbus.iss
+          if ([string]::IsNullOrWhiteSpace($out)) { $out = "build\windows\x64\runner\Release" }
+          # ISCC resolves relative paths against the script's directory, so make
+          # BuildDir absolute before handing it to Inno Setup.
+          if ([System.IO.Path]::IsPathRooted($out)) {
+            $buildDir = $out
+          } else {
+            $buildDir = Join-Path $env:GITHUB_WORKSPACE $out
+          }
+          if (-not (Test-Path $buildDir)) {
+            throw "Flutter build output directory not found: $buildDir"
+          }
+          $buildDir = (Resolve-Path $buildDir).Path
+          & $iscc "/DMyAppVersion=$ver" "/DBuildDir=$buildDir" scripts\nimbus.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
           Get-ChildItem release
       - uses: actions/upload-artifact@v4
         with:

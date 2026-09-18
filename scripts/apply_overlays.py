@@ -98,19 +98,37 @@ def patch_android_gradle() -> None:
             text = _ensure_extra(text, "applicationId", '    applicationId "pm.dnschanger.nimbus"')
 
     # Ensure NDK abiFilters (inside defaultConfig, the documented location).
+    # `flutter build apk --split-per-abi` passes -Psplit-per-abi=true, which makes
+    # Flutter's Gradle plugin configure splits.abi itself. AGP then fails the
+    # build when ndk.abiFilters is also set:
+    #   "Conflicting configuration : ... in ndk abiFilters cannot be present
+    #    when splits abi filters are set"
+    # So the filters must only be applied for non-split (universal) builds.
     if "abiFilters" not in text:
+        groovy_filters = (
+            "defaultConfig {\n"
+            "        ndk {\n"
+            "            // ndk.abiFilters cannot coexist with APK splits\n"
+            "            // (flutter build apk --split-per-abi => -Psplit-per-abi=true).\n"
+            '            if (!(project.hasProperty("split-per-abi") && project.property("split-per-abi").toBoolean())) {\n'
+            '                abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"\n'
+            "            }\n"
+            "        }"
+        )
+        kts_filters = (
+            "defaultConfig {\n"
+            "        ndk {\n"
+            "            // ndk.abiFilters cannot coexist with APK splits\n"
+            "            // (flutter build apk --split-per-abi => -Psplit-per-abi=true).\n"
+            '            if (project.findProperty("split-per-abi")?.toString()?.toBoolean() != true) {\n'
+            '                abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")\n'
+            "            }\n"
+            "        }"
+        )
         if path.suffix == ".kts":
-            text = text.replace(
-                "defaultConfig {",
-                'defaultConfig {\n        ndk {\n            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")\n        }',
-                1,
-            )
+            text = text.replace("defaultConfig {", kts_filters, 1)
         else:
-            text = text.replace(
-                "defaultConfig {",
-                'defaultConfig {\n        ndk {\n            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"\n        }',
-                1,
-            )
+            text = text.replace("defaultConfig {", groovy_filters, 1)
 
     # Ensure packaging legacy for extractNativeLibs=true compatibility
     # AGP 8.1+ removed android.bundle.enableUncompressedNativeLibs
@@ -163,11 +181,20 @@ def patch_android_gradle() -> None:
         else:
             text = text.replace("buildTypes {", signing_groovy.strip("\n") + "\n\n    buildTypes {", 1)
             # Use the release config when the keystore env is set, else debug.
-            text = text.replace(
-                "signingConfig signingConfigs.debug",
-                "signingConfig signingConfigs.findByName(\"release\") ?: signingConfigs.debug",
+            # Flutter 3.27 Groovy templates write "signingConfig = signingConfigs.debug"
+            # (with an '='); older templates omit it. Handle both forms.
+            replaced = text.replace(
+                "signingConfig = signingConfigs.debug",
+                'signingConfig = signingConfigs.findByName("release") ?: signingConfigs.debug',
                 1,
             )
+            if replaced == text:
+                replaced = text.replace(
+                    "signingConfig signingConfigs.debug",
+                    'signingConfig signingConfigs.findByName("release") ?: signingConfigs.debug',
+                    1,
+                )
+            text = replaced
 
     path.write_text(text, encoding="utf-8")
     print("patched", path.relative_to(ROOT))
