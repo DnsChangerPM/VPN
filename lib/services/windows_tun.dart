@@ -104,6 +104,51 @@ class NetInterface {
   String toString() => '#$index $name${state.isEmpty ? '' : ' ($state)'}';
 }
 
+/// One row of the IPv4 routing table as `route print` prints it:
+///
+/// ```
+/// Active Routes:
+/// Network Destination        Netmask          Gateway       Interface  Metric
+///           0.0.0.0          0.0.0.0      192.168.1.1     192.168.1.5      25
+///           0.0.0.0          0.0.0.0         On-link       198.18.0.1       5
+/// ```
+///
+/// The Gateway column is the only one that can hold free text: Windows prints
+/// the localized word “On-link” for a directly attached route — and a route
+/// whose gateway is the interface's *own* address (the pattern every TUN VPN
+/// uses for its default route) is stored and printed exactly that way. A
+/// check that expects an IP in the Gateway column misses the route right
+/// after `route add` reported success, which is how a working tunnel ended up
+/// reported as “accepted but not in the table” (seen on Windows 8.1).
+class RouteLine {
+  const RouteLine({
+    required this.destination,
+    required this.mask,
+    required this.gateway,
+    required this.interfaceAddress,
+    this.metric = 0,
+  });
+
+  final String destination;
+  final String mask;
+
+  /// Dotted IPv4 — or the localized on-link word (“On-link” in English,
+  /// «روی پیوند» in Persian, …).
+  final String gateway;
+
+  /// The interface's own address — always a dotted IPv4.
+  final String interfaceAddress;
+  final int metric;
+
+  bool get isOnLink => !ipPattern.hasMatch(gateway);
+
+  static final ipPattern = RegExp(r'^\d{1,3}(?:\.\d{1,3}){3}$');
+
+  @override
+  String toString() =>
+      '$destination/$mask gw=$gateway if=$interfaceAddress m=$metric';
+}
+
 /// Parsing helpers for the `netsh` / `route` text output Nimbus has to read on
 /// Windows. Kept free of `Process` calls so they are unit-testable anywhere.
 class Netsh {
@@ -160,27 +205,64 @@ class Netsh {
     return null;
   }
 
-  /// True when `route print 0.0.0.0` shows a default route that goes through
-  /// the tunnel (either as gateway or as the interface address).
+  /// Parses the IPv4 route rows of `route print` (full or filtered) into
+  /// [RouteLine]s.
+  ///
+  /// Everything that is not a route row — the interface list, the `===`
+  /// separators, the localized section headers, the IPv6 table (different
+  /// column order) — is skipped structurally, so the parser works on every
+  /// locale and on old builds alike. Columns are padded with at least two
+  /// spaces; a localized on-link word may contain a single space, which must
+  /// not split the column, so the split is on two-or-more spaces only.
+  static List<RouteLine> parseRouteLines(String text) {
+    final rows = <RouteLine>[];
+    for (final raw in text.split(RegExp(r'\r?\n'))) {
+      final tokens = raw.trim().split(RegExp(r'\s{2,}'));
+      if (tokens.length < 4) continue;
+      if (!RouteLine.ipPattern.hasMatch(tokens[0])) continue;
+      if (!RouteLine.ipPattern.hasMatch(tokens[1])) continue;
+      final metric = int.tryParse(tokens.last);
+      if (metric == null) continue;
+      final iface = tokens[tokens.length - 2];
+      if (!RouteLine.ipPattern.hasMatch(iface)) continue;
+      final gateway =
+          tokens.sublist(2, tokens.length - 2).join(' ').trim();
+      if (gateway.isEmpty) continue;
+      rows.add(RouteLine(
+        destination: tokens[0],
+        mask: tokens[1],
+        gateway: gateway,
+        interfaceAddress: iface,
+        metric: metric,
+      ));
+    }
+    return rows;
+  }
+
+  /// True when `route print` shows a default route that goes through the
+  /// tunnel — whether Windows stored it with the tunnel address as gateway
+  /// or normalized it to an on-link route (its Gateway column then shows a
+  /// localized word instead of an IP; see [RouteLine]).
   static bool hasDefaultRoute(String routePrint, String tunIp) {
-    final re = RegExp(r'0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)');
-    for (final m in re.allMatches(routePrint)) {
-      if (m.group(1) == tunIp || m.group(2) == tunIp) return true;
+    for (final row in parseRouteLines(routePrint)) {
+      if (row.destination != '0.0.0.0' || row.mask != '0.0.0.0') continue;
+      if (row.interfaceAddress == tunIp) return true;
+      if (row.gateway == tunIp) return true;
     }
     return false;
   }
 
-  /// The machine's real default gateway, read from `route print 0.0.0.0`.
+  /// The machine's real default gateway, read from `route print`.
   /// Ignores a tunnel gateway so a reconnect after a crash does not capture
-  /// our own 198.18.x address as "the" upstream.
+  /// our own 198.18.x address as "the" upstream. On-link default routes carry
+  /// no usable upstream and are skipped.
   static String? parseGateway(String routePrint, {String? ignore}) {
-    final re = RegExp(
-        r'0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)');
-    for (final m in re.allMatches(routePrint)) {
-      final gw = m.group(1)!;
-      if (gw == ignore) continue;
-      if (gw.startsWith('198.18.')) continue;
-      return gw;
+    for (final row in parseRouteLines(routePrint)) {
+      if (row.destination != '0.0.0.0' || row.mask != '0.0.0.0') continue;
+      if (!RouteLine.ipPattern.hasMatch(row.gateway)) continue;
+      if (row.gateway == ignore) continue;
+      if (row.gateway.startsWith('198.18.')) continue;
+      return row.gateway;
     }
     return null;
   }
