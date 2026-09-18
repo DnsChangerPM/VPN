@@ -17,28 +17,56 @@ import androidx.core.app.NotificationCompat
 import hev.htproxy.TProxyService
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileWriter
 import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.Locale
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * Device VPN / local SOCKS harness around the Aether core.
+ *
+ * Lifecycle deliberately mirrors the reference client (hamvex/AetherGUI):
+ *
+ *  1. stale cores from an older session are reaped — one wedged instance that
+ *     still owns :1819 used to make every later Connect report "connected"
+ *     against a core that carries nothing;
+ *  2. the core is configured through environment variables only;
+ *  3. readiness means a real SOCKS5 method-selection handshake, not a bare
+ *     TCP accept;
+ *  4. MASQUE HTTP/3 gets a short primary window and then falls back to the
+ *     HTTP/2 carrier, because networks that drop QUIC only pass TCP 443;
+ *  5. "connected" is only published after a real HTTP request completes
+ *     through the tunnel — the false-Connected the old build showed (no key
+ *     icon, nothing working) came from skipping exactly this gate;
+ *  6. a broken gateway becomes an explicit error with the core's own log
+ *     lines attached, never an endless spinner.
+ */
 class NimbusVpnService : VpnService() {
-    private val io = Executors.newCachedThreadPool()
-    private var tun: ParcelFileDescriptor? = null
-    private var core: Process? = null
-    private var download: Long = 0
-    private var upload: Long = 0
-    private var endpoint: String = ""
-    private var protocol: String = ""
-    private var socksPort: Int = 1819
-    private var tunMtu: Int = 1400
+    private val io: ExecutorService = Executors.newCachedThreadPool()
+    @Volatile private var tun: ParcelFileDescriptor? = null
+    @Volatile private var core: Process? = null
+    @Volatile private var download: Long = 0
+    @Volatile private var upload: Long = 0
+    @Volatile private var endpoint: String = ""
+    @Volatile private var protocol: String = "masque"
+    @Volatile private var socksPort: Int = 1819
+    @Volatile private var tunMtu: Int = 1400
+    @Volatile private var bridgeStarted: Boolean = false
+    @Volatile private var h3GatewayUnavailable: Boolean = false
+    @Volatile private var lastCoreError: String = ""
     private val lanProxy = LanProxyServer()
+    private val generation = AtomicLong(0)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopTunnel()
+                io.execute { stopTunnelFromIntent() }
                 return START_NOT_STICKY
             }
             ACTION_START, null -> {
@@ -51,43 +79,67 @@ class NimbusVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        stopTunnel()
+        generation.incrementAndGet()
+        teardownQuiet()
         io.shutdownNow()
         super.onDestroy()
     }
 
-    private fun startTunnel(extras: android.os.Bundle?) {
-        if (!running.compareAndSet(false, true)) return
-        emit("status", "preparing", "Starting Aether")
+    private fun isCurrent(session: Long): Boolean =
+        running.get() && generation.get() == session
+
+    // ------------------------------------------------------------------
+    // Start pipeline
+    // ------------------------------------------------------------------
+
+    private fun startTunnel(extras: Bundle?) {
+        // A repeated Connect restarts cleanly instead of stacking on top of a
+        // half-dead session: invalidate the old generation, tear it down
+        // quietly, then take a fresh session id for this pipeline.
+        generation.incrementAndGet()
+        val wasRunning = running.get()
+        running.set(false)
+        if (wasRunning) teardownQuiet()
+        val session = generation.incrementAndGet()
+        running.set(true)
+        publishPhase("preparing", "Preparing")
         startForegroundCompat()
         try {
-            val args = extras?.getStringArrayList(EXTRA_ARGS) ?: arrayListOf("--masque", "-4")
-            protocol = extras?.getString(EXTRA_PROTOCOL) ?: "masque"
+            val envLines = extras?.getStringArrayList(EXTRA_ENV) ?: arrayListOf()
+            val env = parseEnvironment(envLines)
+            protocol = value(env, "AETHER_PROTOCOL",
+                extras?.getString(EXTRA_PROTOCOL) ?: "masque")
+            val transport = value(env, "AETHER_MASQUE_HTTP2", if ("h2" == extras?.getString(EXTRA_TRANSPORT)) "1" else "0")
             val mode = extras?.getString(EXTRA_MODE) ?: "vpn"
-            val dns = extras?.getBoolean(EXTRA_DNS, true) ?: true
+            val dns = extras?.getBoolean(EXTRA_DNS, true) != false
             val splitMode = extras?.getString(EXTRA_SPLIT_MODE) ?: "off"
             val splitApps = extras?.getStringArrayList(EXTRA_SPLIT_APPS) ?: arrayListOf()
             socksPort = extras?.getInt(EXTRA_SOCKS_PORT, 1819) ?: 1819
             tunMtu = extras?.getInt(EXTRA_MTU, 1400) ?: 1400
-            val kill = extras?.getBoolean(EXTRA_KILL, true) ?: true
-            val bypassLan = extras?.getBoolean(EXTRA_BYPASS_LAN, true) ?: true
-            val ipv6 = extras?.getBoolean(EXTRA_IPV6, false) ?: false
-            val lanShare = extras?.getBoolean(EXTRA_LAN_SHARE, false) ?: false
+            val bypassLan = extras?.getBoolean(EXTRA_BYPASS_LAN, true) != false
+            val ipv6 = extras?.getBoolean(EXTRA_IPV6, false) == true
+            val lanShare = extras?.getBoolean(EXTRA_LAN_SHARE, false) == true
 
             val bin = File(applicationInfo.nativeLibraryDir, "libaether.so")
-            if (!bin.exists()) throw IllegalStateException("libaether.so missing")
+            if (!bin.isFile) {
+                throw IllegalStateException("Aether core is missing for this device architecture")
+            }
 
-            killStale()
-            core = ProcessBuilder(listOf(bin.absolutePath) + args)
-                .directory(filesDir)
-                .redirectErrorStream(true)
-                .start()
-            io.execute { pumpLogs(core!!) }
+            // One stale core that outlived its session still owns the SOCKS
+            // port and its upstream sockets; clearing it is what makes a
+            // repeated Connect deterministic.
+            reapOrphanedCores()
+            awaitSocksPortReleased()
 
-            if (!waitSocks()) throw IllegalStateException("SOCKS5 did not come up")
-            emit("status", "connecting", "SOCKS5 ready")
+            env["AETHER_CONFIG"] = File(filesDir, "aether.toml").absolutePath
+            env["AETHER_SOCKS"] = "127.0.0.1:$socksPort"
+            env["TMPDIR"] = cacheDir.absolutePath
+            // Persist before any failure path so QS tile / boot auto-connect
+            // reuse the last request.
+            persistLast(extras, envLines)
 
-            persistLast(extras)
+            if (!startCoreWithMasqueFallback(bin, env, transport, session)) return bail(session)
+
             if (lanShare) {
                 val lanPort = if (socksPort in 1..65534) socksPort + 1 else 1820
                 if (lanProxy.start(lanPort, "127.0.0.1", socksPort)) {
@@ -98,71 +150,628 @@ class NimbusVpnService : VpnService() {
                     )
                 }
             }
+
             if (mode == "vpn") {
-                val builder = Builder()
-                    .setSession("Nimbus")
-                    .setMtu(tunMtu)
-                    .addAddress("198.18.0.1", 32)
-                    .setBlocking(kill)
-                if (ipv6) {
-                    builder.addAddress("fc00::1", 128)
-                    builder.addRoute("::", 0)
+                if (!establishVpn(dns, bypassLan, ipv6, splitMode, splitApps, session)) {
+                    return bail(session)
                 }
-                if (bypassLan) {
-                    for (cidr in LAN_BYPASS) {
-                        val parts = cidr.split("/")
-                        builder.addRoute(parts[0], parts[1].toInt())
-                    }
-                } else {
-                    builder.addRoute("0.0.0.0", 0)
-                }
-                if (dns) {
-                    builder.addDnsServer("1.1.1.1")
-                    builder.addDnsServer("1.0.0.1")
-                }
-                try {
-                    builder.addDisallowedApplication(packageName)
-                } catch (_: Exception) {
-                }
-                when (splitMode) {
-                    "include" -> splitApps.forEach {
-                        try {
-                            builder.addAllowedApplication(it)
-                        } catch (_: Exception) {
-                        }
-                    }
-                    "exclude" -> splitApps.forEach {
-                        try {
-                            builder.addDisallowedApplication(it)
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-                tun = builder.establish() ?: throw IllegalStateException("VPN establish failed")
-                writeHevConfig()
-                val started = TProxyService.TProxyStartService(
-                    File(filesDir, "hev.yml").absolutePath,
-                    tun!!.fd,
-                )
-                if (!started) throw IllegalStateException("HEV tunnel failed to start")
             }
-            emit(
-                "status",
+
+            publishPhase("securing", "Verifying the tunnel")
+            if (!validateTrafficReady(session, attempts = 2)) {
+                // The gateway answered but carries no traffic: re-roll the
+                // endpoint in place once (core restart only, TUN stays).
+                sendLog("Gateway cannot carry traffic; re-rolling endpoint")
+                stopCoreOnly()
+                awaitSocksPortReleased()
+                if (!isCurrent(session)) return
+                if (!startCoreWithMasqueFallback(bin, env, transport, session)) return bail(session)
+                if (!validateTrafficReady(session, attempts = 1)) {
+                    throw IllegalStateException(
+                        "Real traffic validation failed — the gateway cannot carry traffic",
+                    )
+                }
+            }
+            if (!isCurrent(session)) return
+
+            publishChrome()
+            publishPhase(
                 "connected",
                 if (mode == "vpn") "Device VPN active" else "SOCKS5 127.0.0.1:$socksPort",
             )
-            publishChrome()
-            monitor()
-        } catch (e: Exception) {
+            io.execute { monitor(session, mode) }
+        } catch (e: Throwable) {
             Log.e(TAG, "start failed", e)
-            emit("status", "error", e.message ?: "start failed")
-            stopTunnel()
+            lastCoreError = e.message ?: "start failed"
+            if (running.get()) {
+                emit("status", "error", lastCoreError)
+                stopTunnelQuietFail(session)
+            }
         }
     }
 
-    private fun monitor() {
+    private fun bail(session: Long) {
+        if (generation.get() == session) {
+            stopTunnelQuietFail(session)
+        }
+    }
+
+    /** Failure teardown from inside the start pipeline: reports the error. */
+    private fun stopTunnelQuietFail(session: Long) {
+        running.set(false)
+        teardownQuiet()
+        if (lastCoreError.isNotEmpty()) {
+            emit("status", "error", lastCoreError)
+        }
+        publishPhase("disconnected", "")
+        publishChrome()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun parseEnvironment(lines: List<String>): LinkedHashMap<String, String> {
+        val env = LinkedHashMap<String, String>()
+        for (line in lines) {
+            val i = line.indexOf('=')
+            if (i > 0) env[line.substring(0, i)] = line.substring(i + 1)
+        }
+        if (env.isEmpty()) {
+            env["AETHER_PROTOCOL"] = "masque"
+            env["AETHER_SCAN"] = "balanced"
+            env["AETHER_IP"] = "v4"
+            env["AETHER_NOIZE"] = "balanced"
+            env["AETHER_LOG_LEVEL"] = "info"
+            env["AETHER_QUICK_RECONNECT"] = "1"
+            env["AETHER_MASQUE_HTTP2"] = "0"
+            env["AETHER_MASQUE_MTU"] = tunMtu.toString()
+        }
+        return env
+    }
+
+    private fun value(env: Map<String, String>, key: String, fallback: String): String =
+        env[key]?.takeIf { it.isNotBlank() } ?: fallback
+
+    // ------------------------------------------------------------------
+    // Core process management
+    // ------------------------------------------------------------------
+
+    private fun startCore(bin: File, env: Map<String, String>): Process {
+        val builder = ProcessBuilder(bin.absolutePath)
+        builder.directory(filesDir)
+        builder.redirectErrorStream(true)
+        val pbEnv = builder.environment()
+        env.forEach { (k, v) -> pbEnv[k] = v }
+        val process = builder.start()
+        core = process
+        sendLog("Aether core started (${Build.SUPPORTED_ABIS.firstOrNull() ?: "abi"})")
+        val reader = Thread({ readCoreLogs(process) }, "aether-log-reader")
+        reader.isDaemon = true
+        reader.start()
+        return process
+    }
+
+    /**
+     * MASQUE over HTTP/3 gets [MASQUE_H3_PRIMARY_MS] first; when QUIC cannot
+     * get through — explicitly ("no usable masque gateway") or by timeout —
+     * the same attempt restarts on the HTTP/2 carrier. Other protocols just
+     * get the full [SOCKS_TIMEOUT_MS].
+     */
+    private fun startCoreWithMasqueFallback(
+        bin: File,
+        env: MutableMap<String, String>,
+        transport: String,
+        session: Long,
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + SOCKS_TIMEOUT_MS
+        val masqueH3 = "masque" == protocol && transport != "1"
+        val masqueMimH3 = "mim" == protocol && transport != "1"
+        h3GatewayUnavailable = false
+        startCore(bin, env)
+        val primary = if (masqueH3 || masqueMimH3) {
+            System.currentTimeMillis() + MASQUE_H3_PRIMARY_MS
+        } else {
+            deadline
+        }
+        if (waitForSocks(primary, session)) return true
+        if (!isCurrent(session)) return false
+        if (!masqueH3 && !masqueMimH3) {
+            if (lastCoreError.isEmpty()) {
+                lastCoreError = "SOCKS5 listener did not start in time"
+            }
+            sendLog(lastCoreError)
+            return false
+        }
+        sendLog(
+            if (h3GatewayUnavailable) {
+                "MASQUE HTTP/3 gateway scan found nothing; retrying on HTTP/2"
+            } else {
+                "MASQUE HTTP/3 did not establish; retrying on HTTP/2"
+            },
+        )
+        stopCoreOnly()
+        awaitSocksPortReleased()
+        if (!isCurrent(session)) return false
+        env["AETHER_MASQUE_HTTP2"] = "1"
+        publishPhase("scanning", "MASQUE HTTP/2")
+        startCore(bin, env)
+        if (waitForSocks(deadline, session)) return true
+        if (lastCoreError.isEmpty()) {
+            lastCoreError = "SOCKS5 listener did not start in time"
+        }
+        sendLog(lastCoreError)
+        return false
+    }
+
+    private fun readCoreLogs(process: Process) {
+        try {
+            BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    val text = line ?: continue
+                    emit("log", null, text)
+                    val lower = text.lowercase(Locale.US)
+                    if (lower.contains("no usable masque gateway found")) {
+                        h3GatewayUnavailable = true
+                    }
+                    if (lower.contains("error") || lower.contains("failed")) {
+                        lastCoreError = text
+                    }
+                    if (lower.contains("identity ready") || lower.contains("hunting for")) {
+                        publishPhase("scanning", "Scanning for a gateway")
+                    }
+                    if (lower.contains("validated") || lower.contains("passed handshake")) {
+                        publishPhase("securing", "Gateway verified")
+                    }
+                    if (lower.contains("peer") ||
+                        lower.contains("endpoint") ||
+                        lower.contains("using")
+                    ) {
+                        Regex("""(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?""")
+                            .find(text)?.groupValues?.get(1)?.let { ip ->
+                                if (!ip.startsWith("127.") &&
+                                    !ip.startsWith("198.18.") &&
+                                    ip != "0.0.0.0"
+                                ) {
+                                    endpoint = ip
+                                }
+                            }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (running.get()) sendLog("Aether log stream closed: ${e.message}")
+        }
+    }
+
+    /** SOCKS5 greeting, the minimum honest readiness signal. */
+    private fun socksHandshakeSucceeds(): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", socksPort), 250)
+                socket.soTimeout = 600
+                socket.getOutputStream().write(byteArrayOf(5, 1, 0))
+                socket.getOutputStream().flush()
+                val greeting = ByteArray(2)
+                var off = 0
+                while (off < 2) {
+                    val n = socket.getInputStream().read(greeting, off, 2 - off)
+                    if (n < 0) return false
+                    off += n
+                }
+                greeting[0].toInt() == 5 && greeting[1].toInt() == 0
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun waitForSocks(deadlineMs: Long, session: Long): Boolean {
+        while (isCurrent(session) && System.currentTimeMillis() < deadlineMs) {
+            if (h3GatewayUnavailable) return false
+            val process = core
+            if (process != null && !process.isAlive) {
+                lastCoreError = "Aether core exited (${process.exitValueSafely()})" +
+                    lastCoreError.let { if (it.isEmpty()) "" else ": $it" }
+                return false
+            }
+            if (socksHandshakeSucceeds()) return true
+            try {
+                Thread.sleep(120)
+            } catch (_: InterruptedException) {
+                return false
+            }
+        }
+        return false
+    }
+
+    private fun Process.exitValueSafely(): String =
+        try {
+            exitValue().toString()
+        } catch (_: IllegalThreadStateException) {
+            "running"
+        }
+
+    /**
+     * Kills stale cores from previous sessions. They share nothing with this
+     * process, so the only safe handle is /proc: every Aether child's cmdline
+     * is the libaether.so absolute path.
+     */
+    private fun reapOrphanedCores() {
+        val mine = android.os.Process.myPid()
+        val selfExe = try {
+            File("/proc/self/exe").canonicalPath
+        } catch (_: Exception) {
+            ""
+        }
+        File("/proc").listFiles { f -> f.name.all { it.isDigit() } }?.forEach { procDir ->
+            val pid = procDir.name.toIntOrNull() ?: return@forEach
+            if (pid == mine) return@forEach
+            try {
+                val cmdline = File(procDir, "cmdline").readText()
+                if (cmdline.contains("libaether.so")) {
+                    Log.w(TAG, "reaping orphaned Aether core pid=$pid")
+                    android.os.Process.killProcess(pid)
+                }
+                // Never touch the zygote/app process itself.
+                if (selfExe.isNotEmpty() && cmdline.startsWith(selfExe)) return@forEach
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun awaitSocksPortReleased() {
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (!socksHandshakeSucceeds()) return
+            reapOrphanedCores()
+            try {
+                Thread.sleep(150)
+            } catch (_: InterruptedException) {
+                return
+            }
+        }
+    }
+
+    private fun stopCoreOnly() {
+        val process = core ?: return
+        core = null
+        try {
+            process.destroy()
+        } catch (_: Exception) {
+        }
         io.execute {
-            while (running.get()) {
+            try {
+                if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    process.waitFor(2, TimeUnit.SECONDS)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // TUN establishment (mirrors the reference client's Builder choices)
+    // ------------------------------------------------------------------
+
+    private fun establishVpn(
+        dns: Boolean,
+        bypassLan: Boolean,
+        ipv6: Boolean,
+        splitMode: String,
+        splitApps: List<String>,
+        session: Long,
+    ): Boolean {
+        val builder = Builder()
+            .setSession("Nimbus VPN")
+            .setMtu(tunMtu)
+            // setBlocking(false): the old build passed the kill-switch flag
+            // here; blocking while the VPN recloses during core restarts is
+            // what wedged apps instead of failing over.
+            .setBlocking(false)
+            .addAddress("198.18.0.1", 30)
+        if (ipv6) {
+            builder.addAddress("fc00::1", 126)
+            builder.addRoute("::", 0)
+        }
+        if (bypassLan) {
+            addPublicRoutes(builder)
+        } else {
+            builder.addRoute("0.0.0.0", 0)
+        }
+        if (dns) {
+            // Both resolvers are public addresses covered by the tunnel
+            // routes, so lookups — including Private DNS — ride the tunnel.
+            builder.addDnsServer("1.1.1.1")
+            builder.addDnsServer("1.0.0.1")
+        }
+        // Per-app routing. The app itself must stay out of the tunnel in
+        // every mode except an explicit include-list that names it (never
+        // auto-added): the core shares this UID, and routing the core's own
+        // egress back into the TUN is a routing loop that looks exactly like
+        // "connected but nothing works".
+        if (splitMode != "include") {
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (_: Exception) {
+            }
+        }
+        var included = 0
+        for (pkg in splitApps.map { it.trim() }.filter { it.isNotEmpty() }) {
+            if (pkg == packageName) continue
+            try {
+                when (splitMode) {
+                    "include" -> builder.addAllowedApplication(pkg)
+                    "exclude" -> builder.addDisallowedApplication(pkg)
+                }
+                included++
+            } catch (_: Exception) {
+            }
+        }
+        if (splitMode == "include" && included == 0) {
+            lastCoreError = "Include-selected apps needs at least one valid app"
+            emit("status", "error", lastCoreError)
+            return false
+        }
+
+        val descriptor = try {
+            builder.establish()
+        } catch (e: Exception) {
+            lastCoreError = "Android refused the VPN interface: ${e.message}"
+            emit("status", "error", lastCoreError)
+            return false
+        }
+        if (descriptor == null) {
+            lastCoreError = "Android could not create the VPN interface"
+            emit("status", "error", lastCoreError)
+            return false
+        }
+        tun = descriptor
+
+        // A previous bridge worker that has not finished makes upstream
+        // TProxyStartService a silent no-op; never start on top of it.
+        if (!awaitBridgeHandover()) {
+            lastCoreError = "The previous tunnel bridge has not shut down yet"
+            emit("status", "error", lastCoreError)
+            return false
+        }
+        val config = writeHevConfig(ipv6)
+        val started = try {
+            TProxyService.TProxyStartService(config.absolutePath, descriptor.fd)
+        } catch (e: UnsatisfiedLinkError) {
+            lastCoreError = "The HEV JNI bridge could not be loaded"
+            emit("status", "error", lastCoreError)
+            return false
+        }
+        if (!started) {
+            lastCoreError = "HEV tunnel failed to start"
+            emit("status", "error", lastCoreError)
+            return false
+        }
+        bridgeStarted = true
+        sendLog("HEV TUN bridge started")
+        return isCurrent(session)
+    }
+
+    private fun awaitBridgeHandover(): Boolean {
+        val deadline = System.currentTimeMillis() + BRIDGE_HANDOVER_MS
+        while (System.currentTimeMillis() < deadline) {
+            val alive = try {
+                TProxyService.TProxyIsRunning()
+            } catch (_: Throwable) {
+                false
+            }
+            if (!alive) return true
+            try {
+                TProxyService.TProxyStopService()
+            } catch (_: Throwable) {
+            }
+            try {
+                Thread.sleep(200)
+            } catch (_: InterruptedException) {
+                return false
+            }
+        }
+        return false
+    }
+
+    private fun writeHevConfig(ipv6: Boolean): File {
+        val config = File(cacheDir, "hev.yml")
+        FileWriter(config, false).use { writer ->
+            writer.write("misc:\n")
+            writer.write("  task-stack-size: 32768\n")
+            writer.write("  connect-timeout: 15000\n")
+            writer.write("  log-level: warn\n")
+            writer.write("tunnel:\n")
+            writer.write("  mtu: $tunMtu\n")
+            writer.write("  ipv4: 198.18.0.1\n")
+            if (ipv6) writer.write("  ipv6: 'fc00::1'\n")
+            writer.write("  icmp: 'reply'\n")
+            writer.write("socks5:\n")
+            writer.write("  address: '127.0.0.1'\n")
+            writer.write("  port: $socksPort\n")
+            writer.write("  udp: 'udp'\n")
+        }
+        return config
+    }
+
+    /**
+     * "0.0.0.0/0 minus local networks", the reference client's bypass-local
+     * route table. The old hand-written list leaked 100.64.0.0/10 (carrier
+     * NAT) and 198.18.0.0/15 (the TUN's own block!) into the tunnel.
+     */
+    private fun addPublicRoutes(builder: Builder) {
+        val ranges = mutableListOf<Pair<Long, Long>>()
+        fun add(cidr: String, prefix: Int) {
+            ranges.add(cidrStart(cidr) to cidrEnd(cidr, prefix))
+        }
+        add("0.0.0.0", 8)
+        add("10.0.0.0", 8)
+        add("100.64.0.0", 10)
+        add("127.0.0.0", 8)
+        add("169.254.0.0", 16)
+        add("172.16.0.0", 12)
+        add("192.0.0.0", 24)
+        add("192.168.0.0", 16)
+        add("198.18.0.0", 15)
+        add("224.0.0.0", 3)
+        ranges.sortBy { it.first }
+        var cursor = 0L
+        for (range in ranges) {
+            if (cursor < range.first) addRangeRoutes(builder, cursor, range.first - 1)
+            cursor = maxOf(cursor, range.second + 1)
+        }
+        if (cursor <= 0xffffffffL) addRangeRoutes(builder, cursor, 0xffffffffL)
+    }
+
+    private fun cidrStart(ip: String): Long {
+        val parts = ip.split(".")
+        var value = 0L
+        for (part in parts) value = (value shl 8) or (part.toLong() and 0xff)
+        return value
+    }
+
+    private fun cidrEnd(ip: String, prefix: Int): Long =
+        cidrStart(ip) or ((1L shl (32 - prefix)) - 1)
+
+    private fun addRangeRoutes(builder: Builder, start: Long, end: Long) {
+        var s = start
+        while (s <= end) {
+            val alignment = if (s == 0L) 1L shl 32 else java.lang.Long.lowestOneBit(s)
+            val remaining = end - s + 1
+            var block = alignment
+            while (block > remaining) block = block ushr 1
+            val prefix = 32 - java.lang.Long.numberOfTrailingZeros(block)
+            builder.addRoute(formatIp(s), prefix)
+            s += block
+        }
+    }
+
+    private fun formatIp(value: Long): String =
+        "${(value ushr 24) and 0xff}.${(value ushr 16) and 0xff}.${(value ushr 8) and 0xff}.${value and 0xff}"
+
+    // ------------------------------------------------------------------
+    // Proven data plane: "connected" only after real traffic
+    // ------------------------------------------------------------------
+
+    private fun validateTrafficReady(session: Long, attempts: Int): Boolean {
+        for (attempt in 1..attempts) {
+            if (!isCurrent(session)) return false
+            for (target in TRAFFIC_TARGETS) {
+                if (httpThroughSocks(target.first, target.second)) return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * One SOCKS5 domain CONNECT + HTTP/1.0 GET through the tunnel. Domain
+     * CONNECT means the core resolves inside the tunnel — the exact path HEV
+     * forwards for apps.
+     */
+    private fun httpThroughSocks(name: String, path: String): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", socksPort), 4_000)
+                socket.soTimeout = 8_000
+                val out = socket.getOutputStream()
+                val input = socket.getInputStream()
+                out.write(byteArrayOf(5, 1, 0))
+                out.flush()
+                val greeting = readExact(input, 2) ?: return false
+                if (greeting[0].toInt() != 5 || greeting[1].toInt() != 0) return false
+                val host = name.toByteArray(Charsets.UTF_8)
+                val request = byteArrayOf(5, 1, 0, 3, host.size.toByte()) +
+                    host + byteArrayOf(0, 80.toByte())
+                out.write(request)
+                out.flush()
+                val replyHead = readExact(input, 4) ?: return false
+                if (replyHead[1].toInt() != 0) return false
+                when (replyHead[3].toInt()) {
+                    1 -> readExact(input, 6)
+                    3 -> {
+                        val n = (readExact(input, 1)?.get(0)?.toInt() ?: 0) and 0xff
+                        readExact(input, n + 2)
+                    }
+                    4 -> readExact(input, 18)
+                }
+                out.write(
+                    ("GET $path HTTP/1.0\r\nHost: $name\r\nUser-Agent: nimbus-probe\r\n\r\n")
+                        .toByteArray(Charsets.UTF_8),
+                )
+                out.flush()
+                val head = readUntilDoubleCrlf(input, 8_192) ?: return false
+                val status = head.substringBefore("\r\n")
+                status.startsWith("HTTP/") &&
+                    (status.contains(" 200") ||
+                        status.contains(" 204") ||
+                        status.contains(" 301") ||
+                        status.contains(" 302"))
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun readExact(input: java.io.InputStream, n: Int): ByteArray? {
+        val buffer = ByteArray(n)
+        var off = 0
+        while (off < n) {
+            val read = input.read(buffer, off, n - off)
+            if (read < 0) return null
+            off += read
+        }
+        return buffer
+    }
+
+    private fun readUntilDoubleCrlf(input: java.io.InputStream, cap: Int): String? {
+        val buffer = java.io.ByteArrayOutputStream()
+        var b: Int
+        var matched = 0
+        val pattern = byteArrayOf(13, 10, 13, 10)
+        while (buffer.size() < cap) {
+            b = input.read()
+            if (b < 0) break
+            buffer.write(b)
+            matched = if (b.toByte() == pattern[matched]) matched + 1 else 0
+            if (matched == 4) return buffer.toString("UTF-8")
+        }
+        return if (buffer.size() > 0) buffer.toString("UTF-8") else null
+    }
+
+    // ------------------------------------------------------------------
+    // Monitor + health
+    // ------------------------------------------------------------------
+
+    private fun monitor(session: Long, mode: String) {
+        var failures = 0
+        var tick = 0
+        while (isCurrent(session)) {
+            val process = core
+            val alive = try {
+                process?.exitValue()
+                false
+            } catch (_: IllegalThreadStateException) {
+                true
+            }
+            if (!alive) {
+                lastCoreError = "Aether core exited"
+                emit("status", "error", lastCoreError)
+                stopTunnelQuietFail(session)
+                return
+            }
+            if (mode == "vpn" && bridgeStarted) {
+                val hevAlive = try {
+                    TProxyService.TProxyIsRunning()
+                } catch (_: Throwable) {
+                    true
+                }
+                if (!hevAlive) {
+                    lastCoreError = "The TUN bridge stopped"
+                    emit("status", "error", lastCoreError)
+                    stopTunnelQuietFail(session)
+                    return
+                }
                 try {
                     val stats = TProxyService.TProxyGetStats()
                     if (stats != null && stats.size >= 4) {
@@ -171,116 +780,126 @@ class NimbusVpnService : VpnService() {
                     }
                 } catch (_: Throwable) {
                 }
-                val alive = try {
-                    core?.exitValue()
-                    false
-                } catch (_: IllegalThreadStateException) {
-                    true
+            }
+            tick++
+            if (tick % 8 == 0) {
+                // Periodic health probe through the tunnel itself.
+                val healthy = httpThroughSocks(
+                    TRAFFIC_TARGETS[0].first,
+                    TRAFFIC_TARGETS[0].second,
+                )
+                failures = if (healthy) 0 else failures + 1
+                if (failures >= 3) {
+                    sendLog("Tunnel stalled; restarting the core")
+                    emit("status", "reconnecting", "Tunnel stalled")
+                    stopCoreOnly()
+                    awaitSocksPortReleased()
+                    val bin = File(applicationInfo.nativeLibraryDir, "libaether.so")
+                    val env = parseEnvironment(
+                        lastExtras?.getStringArrayList(EXTRA_ENV) ?: arrayListOf(),
+                    )
+                    env["AETHER_CONFIG"] = File(filesDir, "aether.toml").absolutePath
+                    env["AETHER_SOCKS"] = "127.0.0.1:$socksPort"
+                    env["TMPDIR"] = cacheDir.absolutePath
+                    startCore(bin, env)
+                    if (!waitForSocks(
+                            System.currentTimeMillis() + SOCKS_TIMEOUT_MS,
+                            session,
+                        ) || !validateTrafficReady(session, 1)
+                    ) {
+                        lastCoreError = "Tunnel did not recover"
+                        emit("status", "error", lastCoreError)
+                        stopTunnelQuietFail(session)
+                        return
+                    }
+                    failures = 0
+                    emit("status", "connected", "Connection restored")
                 }
-                if (!alive && running.get()) {
-                    emit("status", "error", "Aether core exited")
-                    stopTunnel()
-                    return@execute
-                }
-                emit("status", if (running.get()) "connected" else "disconnected", null)
-                Thread.sleep(2000)
+            }
+            emit("status", if (running.get()) "connected" else "disconnected", null)
+            try {
+                Thread.sleep(2_000)
+            } catch (_: InterruptedException) {
+                return
             }
         }
     }
 
-    private fun stopTunnel() {
+    // ------------------------------------------------------------------
+    // Stop
+    // ------------------------------------------------------------------
+
+    private fun stopTunnelFromIntent() {
+        generation.incrementAndGet()
         running.set(false)
+        teardownQuiet()
+        publishPhase("disconnected", "")
+        publishChrome()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /**
+     * Releases every resource of a session, quietly. Never blocks the UI.
+     * Emits nothing: a "disconnected" blip here would read as a user stop —
+     * phases are published only by the explicit start/stop/fail paths.
+     */
+    private fun teardownQuiet() {
+        bridgeStarted = false
         try {
             lanProxy.stop()
         } catch (_: Throwable) {
         }
-        try {
-            TProxyService.TProxyStopService()
-        } catch (_: Throwable) {
+        // TProxyStopService joins the tunnel worker; a native call of
+        // unbounded duration never runs on the lifecycle thread.
+        io.execute {
+            try {
+                TProxyService.TProxyStopService()
+            } catch (_: Throwable) {
+            }
         }
         try {
             tun?.close()
         } catch (_: Exception) {
         }
         tun = null
-        try {
-            core?.destroy()
-        } catch (_: Exception) {
-        }
-        core = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        emit("status", "disconnected", "")
-        publishChrome()
-        stopSelf()
+        stopCoreOnly()
     }
 
-    private fun waitSocks(): Boolean {
-        repeat(80) {
-            try {
-                Socket().use { s ->
-                    s.connect(InetSocketAddress("127.0.0.1", socksPort), 400)
-                    return true
-                }
-            } catch (_: Exception) {
-                Thread.sleep(500)
-            }
-        }
-        return false
-    }
+    // ------------------------------------------------------------------
+    // Plumbing (unchanged contracts with tile/widget/plugin)
+    // ------------------------------------------------------------------
 
-    private fun pumpLogs(proc: Process) {
-        BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                val text = line ?: continue
-                emit("log", null, text)
-                Regex("""(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?""").find(text)?.let {
-                    if (!it.value.startsWith("127.")) endpoint = it.groupValues[1]
-                }
-            }
-        }
-    }
-
-    private fun writeHevConfig() {
-        File(filesDir, "hev.yml").writeText(
-            """
-            tunnel:
-              mtu: $tunMtu
-              ipv4: 198.18.0.1
-            socks5:
-              port: $socksPort
-              address: 127.0.0.1
-              udp: 'udp'
-            misc:
-              log-level: warn
-            """.trimIndent()
-        )
-    }
-
-    private fun persistLast(extras: android.os.Bundle?) {
+    private fun persistLast(extras: Bundle?, envLines: List<String>) {
         extras ?: return
         lastExtras = Bundle(extras)
-        val args = extras.getStringArrayList(EXTRA_ARGS) ?: arrayListOf()
+        if (!lastExtras!!.containsKey(EXTRA_ENV)) {
+            lastExtras!!.putStringArrayList(EXTRA_ENV, ArrayList(envLines))
+        }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putString(EXTRA_PROTOCOL, extras.getString(EXTRA_PROTOCOL, "masque"))
+            .putString(EXTRA_PROTOCOL, extras.getString(EXTRA_PROTOCOL, protocol))
             .putString(EXTRA_MODE, extras.getString(EXTRA_MODE, "vpn"))
             .putBoolean(EXTRA_DNS, extras.getBoolean(EXTRA_DNS, true))
             .putString(EXTRA_SPLIT_MODE, extras.getString(EXTRA_SPLIT_MODE, "off"))
-            .putString(EXTRA_SPLIT_APPS, extras.getStringArrayList(EXTRA_SPLIT_APPS)?.joinToString(","))
+            .putString(
+                EXTRA_SPLIT_APPS,
+                extras.getStringArrayList(EXTRA_SPLIT_APPS)?.joinToString(","),
+            )
             .putInt(EXTRA_SOCKS_PORT, extras.getInt(EXTRA_SOCKS_PORT, 1819))
             .putInt(EXTRA_MTU, extras.getInt(EXTRA_MTU, 1400))
             .putBoolean(EXTRA_KILL, extras.getBoolean(EXTRA_KILL, true))
             .putBoolean(EXTRA_BYPASS_LAN, extras.getBoolean(EXTRA_BYPASS_LAN, true))
             .putBoolean(EXTRA_IPV6, extras.getBoolean(EXTRA_IPV6, false))
             .putBoolean(EXTRA_LAN_SHARE, extras.getBoolean(EXTRA_LAN_SHARE, false))
+            .putString(EXTRA_TRANSPORT, extras.getString(EXTRA_TRANSPORT, "h3"))
             .putBoolean("autoConnect", extras.getBoolean("autoConnect", false))
-            .putString(EXTRA_ARGS, args.joinToString("\u0001"))
+            .putString(EXTRA_ENV, (extras.getStringArrayList(EXTRA_ENV) ?: ArrayList(envLines)).joinToString("\u0001"))
             .apply()
     }
 
-    private fun extrasFromPrefs(): android.os.Bundle {
+    private fun extrasFromPrefs(): Bundle {
         val p = getSharedPreferences(PREFS, MODE_PRIVATE)
-        val b = android.os.Bundle()
+        val b = Bundle()
         b.putString(EXTRA_PROTOCOL, p.getString(EXTRA_PROTOCOL, "masque"))
         b.putString(EXTRA_MODE, p.getString(EXTRA_MODE, "vpn"))
         b.putBoolean(EXTRA_DNS, p.getBoolean(EXTRA_DNS, true))
@@ -296,28 +915,23 @@ class NimbusVpnService : VpnService() {
         b.putBoolean(EXTRA_BYPASS_LAN, p.getBoolean(EXTRA_BYPASS_LAN, true))
         b.putBoolean(EXTRA_IPV6, p.getBoolean(EXTRA_IPV6, false))
         b.putBoolean(EXTRA_LAN_SHARE, p.getBoolean(EXTRA_LAN_SHARE, false))
-        val args = (p.getString(EXTRA_ARGS, "") ?: "").split("\u0001").filter { it.isNotEmpty() }
-        b.putStringArrayList(EXTRA_ARGS, ArrayList(if (args.isEmpty()) listOf("--masque", "-4") else args))
+        b.putString(EXTRA_TRANSPORT, p.getString(EXTRA_TRANSPORT, "h3"))
+        val env = (p.getString(EXTRA_ENV, "") ?: "").split("\u0001")
+            .filter { it.contains('=') }
+        b.putStringArrayList(EXTRA_ENV, ArrayList(env))
         return b
-    }
-
-    private fun killStale() {
-        try {
-            core?.destroy()
-        } catch (_: Exception) {
-        }
     }
 
     private fun startForegroundCompat() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Nimbus VPN", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL, "Nimbus VPN", NotificationManager.IMPORTANCE_LOW),
             )
         }
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val pi = PendingIntent.getActivity(
-            this, 0, launch, PendingIntent.FLAG_IMMUTABLE
+            this, 0, launch, PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(
             this,
@@ -334,7 +948,11 @@ class NimbusVpnService : VpnService() {
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIF, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(
+                NOTIF,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
         } else {
             startForeground(NOTIF, notification)
         }
@@ -350,6 +968,17 @@ class NimbusVpnService : VpnService() {
             sendBroadcast(upd)
         } catch (_: Exception) {
         }
+    }
+
+    private fun publishPhase(phase: String, message: String) {
+        currentPhase = phase
+        currentMessage = message
+        emit("status", phase, message)
+    }
+
+    private fun sendLog(line: String) {
+        emit("log", null, line)
+        Log.i(TAG, line)
     }
 
     private fun emit(type: String, phase: String?, message: String?) {
@@ -371,7 +1000,7 @@ class NimbusVpnService : VpnService() {
                 "protocol" to protocol,
                 "download" to download,
                 "upload" to upload,
-            )
+            ),
         )
     }
 
@@ -382,8 +1011,10 @@ class NimbusVpnService : VpnService() {
         const val ACTION_START = "pm.dnschanger.nimbus.START"
         const val ACTION_STOP = "pm.dnschanger.nimbus.STOP"
         const val ACTION_EVENT = "pm.dnschanger.nimbus.EVENT"
-        const val EXTRA_ARGS = "args"
+        const val EXTRA_ARGS = "args" // legacy, kept for stored-pref compat
+        const val EXTRA_ENV = "env"
         const val EXTRA_PROTOCOL = "protocol"
+        const val EXTRA_TRANSPORT = "transport"
         const val EXTRA_MODE = "mode"
         const val EXTRA_DNS = "dns"
         const val EXTRA_SPLIT_MODE = "splitMode"
@@ -395,19 +1026,28 @@ class NimbusVpnService : VpnService() {
         const val EXTRA_IPV6 = "ipv6Tunnel"
         const val EXTRA_LAN_SHARE = "lanShare"
         const val PREFS = "nimbus_vpn"
+
+        private const val SOCKS_TIMEOUT_MS = 60_000L
+        private const val MASQUE_H3_PRIMARY_MS = 20_000L
+        private const val BRIDGE_HANDOVER_MS = 10_000L
+
+        /** Independent operators, plain HTTP through the tunnel. */
+        private val TRAFFIC_TARGETS = listOf(
+            "www.cloudflare.com" to "/cdn-cgi/trace",
+            "detectportal.firefox.com" to "/success.txt",
+            "connectivitycheck.gstatic.com" to "/generate_204",
+        )
+
         val running = AtomicBoolean(false)
         @Volatile var lastExtras: Bundle? = null
+        @Volatile var currentPhase: String = "disconnected"
+            private set
+        @Volatile var currentMessage: String = ""
+            private set
 
-        // 0.0.0.0/0 minus RFC1918 so LAN stays local (Aethon bypass-local).
-        val LAN_BYPASS = arrayOf(
-            "0.0.0.0/5", "8.0.0.0/7", "11.0.0.0/8", "12.0.0.0/6", "16.0.0.0/4",
-            "32.0.0.0/3", "64.0.0.0/3", "96.0.0.0/4", "112.0.0.0/5", "120.0.0.0/6",
-            "124.0.0.0/7", "126.0.0.0/8", "128.0.0.0/3", "160.0.0.0/5", "168.0.0.0/6",
-            "172.0.0.0/12", "172.32.0.0/11", "172.64.0.0/10", "173.0.0.0/8",
-            "174.0.0.0/7", "176.0.0.0/4", "192.0.0.0/9", "192.128.0.0/11",
-            "192.160.0.0/13", "192.169.0.0/16", "192.170.0.0/15", "192.172.0.0/14",
-            "192.176.0.0/12", "192.192.0.0/10", "193.0.0.0/8", "194.0.0.0/7",
-            "196.0.0.0/6", "200.0.0.0/5", "208.0.0.0/4",
+        fun statusMap(): Map<String, Any?> = mapOf(
+            "phase" to (if (running.get()) currentPhase else "disconnected"),
+            "message" to currentMessage,
         )
     }
 }

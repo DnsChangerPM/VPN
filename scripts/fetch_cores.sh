@@ -39,25 +39,35 @@ stage_aether_android() {
   local tmp="$ROOT/third_party/aether-$abi"
   mkdir -p "$tmp" "$ROOT/android/app/src/main/jniLibs/$jni"
   download "https://github.com/CluvexStudio/Aether/releases/download/${AETHER_TAG}/${asset}" "$tmp/$asset"
-  download "https://github.com/CluvexStudio/Aether/releases/download/${AETHER_TAG}/${asset}.sha256" "$tmp/$asset.sha256" || true
-  if [[ -f "$tmp/$asset.sha256" && -s "$tmp/$asset.sha256" ]]; then
-    (cd "$tmp" && sha256sum -c "$asset.sha256" || true)
-  fi
+  download "https://github.com/CluvexStudio/Aether/releases/download/${AETHER_TAG}/${asset}.sha256" "$tmp/$asset.sha256"
+  # A failed or skipped checksum used to pass silently and shipped a corrupt
+  # (or truncated) core — the app then "connected" to nothing. Hard fail.
+  (cd "$tmp" && sha256sum -c "$asset.sha256")
   tar -xzf "$tmp/$asset" -C "$tmp"
   local bin
   bin="$(find "$tmp" -type f -name 'aether' | head -n1)"
+  if [[ -z "$bin" || ! -f "$bin" ]]; then
+    echo "Error: no 'aether' executable inside $asset" >&2
+    tar -tzf "$tmp/$asset" >&2 || true
+    exit 1
+  fi
   cp "$bin" "$ROOT/android/app/src/main/jniLibs/$jni/libaether.so"
   chmod 755 "$ROOT/android/app/src/main/jniLibs/$jni/libaether.so"
+  # Sanity: the staged payload must really be an ELF executable, otherwise
+  # ProcessBuilder fails at runtime on the device.
+  if ! head -c 4 "$ROOT/android/app/src/main/jniLibs/$jni/libaether.so" | grep -q $'\x7fELF'; then
+    echo "Error: $asset did not contain an ELF binary" >&2
+    exit 1
+  fi
+  echo "staged $jni/libaether.so ($(du -h "$ROOT/android/app/src/main/jniLibs/$jni/libaether.so" | cut -f1))"
 }
 
 stage_aether_windows() {
   local tmp="$ROOT/third_party/aether-win"
   mkdir -p "$tmp"
   download "https://github.com/CluvexStudio/Aether/releases/download/${AETHER_TAG}/aether-windows-x86_64.zip" "$tmp/aether-windows-x86_64.zip"
-  download "https://github.com/CluvexStudio/Aether/releases/download/${AETHER_TAG}/aether-windows-x86_64.zip.sha256" "$tmp/aether-windows-x86_64.zip.sha256" || true
-  if [[ -f "$tmp/aether-windows-x86_64.zip.sha256" && -s "$tmp/aether-windows-x86_64.zip.sha256" ]]; then
-    (cd "$tmp" && sha256sum -c aether-windows-x86_64.zip.sha256 || true)
-  fi
+  download "https://github.com/CluvexStudio/Aether/releases/download/${AETHER_TAG}/aether-windows-x86_64.zip.sha256" "$tmp/aether-windows-x86_64.zip.sha256"
+  (cd "$tmp" && sha256sum -c aether-windows-x86_64.zip.sha256)
   "$PYTHON" - "$tmp" <<'PY'
 import zipfile, sys
 from pathlib import Path
@@ -66,6 +76,10 @@ with zipfile.ZipFile(z) as f:
     f.extractall(z.parent)
 PY
   find "$tmp" -name 'aether.exe' -exec cp {} "$ROOT/third_party/windows/aether.exe" \;
+  if [[ ! -s "$ROOT/third_party/windows/aether.exe" ]]; then
+    echo "Error: aether.exe missing after extraction" >&2
+    exit 1
+  fi
 }
 
 stage_tun2socks() {

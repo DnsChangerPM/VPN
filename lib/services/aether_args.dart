@@ -2,84 +2,111 @@ import 'dart:io' show Platform;
 
 import '../models/settings.dart';
 
+/// Builds the Aether core launch configuration.
+///
+/// Following the reference client (hamvex/AetherGUI), the core is driven
+/// **only through environment variables** and never through CLI flags. Every
+/// documented flag has an env twin (see CluvexStudio/Aether Docs →
+/// "Environment variables"), env is what the reference GUI validates against,
+/// and env-only keeps Android/Windows behaviour identical.
 class AetherLaunch {
   static const coreVersion = '2.0.0';
 
+  /// Obfuscation profile given to the core. The core accepts
+  /// off|light|balanced|aggressive (plus aliases like gfw/firewall); anything
+  /// unknown falls back to its "firewall" preset, so unrecognised values are
+  /// harmless, but we always send a documented value.
   static String noizeFor(Protocol protocol, String obfuscation) {
-    if (obfuscation != 'auto') return obfuscation;
-    switch (protocol) {
-      case Protocol.masque:
-      case Protocol.mim:
-      case Protocol.smart:
-        return 'firewall';
-      case Protocol.wg:
-      case Protocol.gool:
-        return 'balanced';
-    }
+    const known = {'off', 'light', 'balanced', 'aggressive', 'gfw', 'firewall'};
+    if (known.contains(obfuscation)) return obfuscation;
+    return 'balanced';
   }
 
-  static List<String> build(VpnSettings settings, {Protocol? override}) {
-    final protocol = override ?? settings.protocol;
-    final args = <String>[
-      '--bind',
-      settings.lanShare && Platform.isWindows
-          ? '0.0.0.0:${settings.socksPort}'
-          : settings.socksBind,
-      '--scan',
-      settings.scan.name,
-      '--noize',
-      noizeFor(protocol, settings.obfuscation),
-    ];
-
-    switch (settings.ipVersion) {
-      case IpVersion.v4:
-        args.add('-4');
-      case IpVersion.v6:
-        args.add('-6');
-      case IpVersion.dual:
-        args.add('--dual');
-    }
-
-    switch (protocol) {
-      case Protocol.smart:
-      case Protocol.masque:
-        args.add('--masque');
-        if (settings.transport == MasqueTransport.h2) {
-          args.add('--h2');
-          if (settings.fragment) args.add('--fragment');
-        }
-      case Protocol.wg:
-        args.add('--wg');
-        args.addAll(['--keepalive', '${settings.keepalive}']);
-      case Protocol.gool:
-        args.add('--gool');
-        args.addAll(['--keepalive', '${settings.keepalive}']);
-      case Protocol.mim:
-        args.add('--mim');
-        if (settings.transport == MasqueTransport.h2) {
-          args.add('--h2');
-          if (settings.fragment) args.add('--fragment');
-        }
-    }
-
-    if (settings.quickReconnect) {
-      args.add('--quick-reconnect');
-    } else {
-      args.add('--no-quick-reconnect');
-    }
-
-    final peer = settings.endpoint.trim();
-    if (peer.isNotEmpty) {
-      args.addAll(['--peer', peer]);
-    }
-    return args;
-  }
-
-  static Map<String, String> environment(VpnSettings settings) => {
-        'AETHER_LOG': settings.logLevel,
-        'AETHER_MASQUE_MTU': '${settings.effectiveMtu}',
+  static String _ipToken(IpVersion v) => switch (v) {
+        IpVersion.v4 => 'v4',
+        IpVersion.v6 => 'v6',
+        IpVersion.dual => 'both',
       };
 
+  static Protocol _effective(VpnSettings s, Protocol? override) {
+    final p = override ?? s.protocol;
+    return p == Protocol.smart ? Protocol.masque : p;
+  }
+
+  /// The environment the core runs with. Mirrors
+  /// AetherGUI `Settings::environment()`:
+  ///   AETHER_PROTOCOL / SCAN / IP / NOIZE / SOCKS / CONFIG / QUICK_RECONNECT /
+  ///   LOG_LEVEL, then transport-specific keys, then the optional peer.
+  static Map<String, String> environment(
+    VpnSettings settings, {
+    Protocol? override,
+
+    /// Absolute path of the identity file the core may write (aether.toml).
+    /// Must live in a per-user writable directory — never next to the exe
+    /// (Program Files is read-only for normal users and a failed identity
+    /// write is the most common "spins forever" cause on Windows).
+    required String configPath,
+    String? tmpDir,
+  }) {
+    final proto = _effective(settings, override);
+    final bind = settings.lanShare && Platform.isWindows
+        ? '0.0.0.0:${settings.socksPort}'
+        : settings.socksBind;
+    final env = <String, String>{
+      'AETHER_PROTOCOL': proto.name,
+      'AETHER_SCAN': settings.scan.name,
+      'AETHER_IP': _ipToken(settings.ipVersion),
+      'AETHER_NOIZE': noizeFor(proto, settings.obfuscation),
+      'AETHER_SOCKS': bind,
+      'AETHER_CONFIG': configPath,
+      'AETHER_QUICK_RECONNECT': settings.quickReconnect ? '1' : '0',
+      'AETHER_LOG_LEVEL': switch (settings.logLevel) {
+        'error' || 'warn' || 'info' || 'debug' || 'trace' => settings.logLevel,
+        _ => 'info',
+      },
+    };
+    if (proto == Protocol.masque || proto == Protocol.mim) {
+      env['AETHER_MASQUE_HTTP2'] =
+          settings.transport == MasqueTransport.h2 ? '1' : '0';
+      env['AETHER_MASQUE_MTU'] = '${settings.effectiveMtu}';
+      if (settings.transport == MasqueTransport.h2 && settings.fragment) {
+        env['AETHER_MASQUE_H2_FRAGMENT'] = '1';
+      }
+    } else {
+      env['AETHER_WG_KEEPALIVE'] = '${settings.keepalive}';
+    }
+    final peer = settings.endpoint.trim();
+    if (peer.isNotEmpty) {
+      if (proto == Protocol.masque || proto == Protocol.mim) {
+        env['AETHER_PEER'] = peer;
+      } else {
+        env['AETHER_WG_PEER'] = peer;
+      }
+    }
+    if (tmpDir != null && tmpDir.isNotEmpty) env['TMPDIR'] = tmpDir;
+    return env;
+  }
+
+  /// Serialised "KEY=VALUE" list for passing through the Android intent.
+  static List<String> environmentLines(
+    VpnSettings settings, {
+    Protocol? override,
+    required String configPath,
+    String? tmpDir,
+  }) {
+    return environment(
+      settings,
+      override: override,
+      configPath: configPath,
+      tmpDir: tmpDir,
+    ).entries.map((e) => '${e.key}=${e.value}').toList();
+  }
+
+  /// Smart Connect ladder. masque appears twice: the first attempt keeps the
+  /// chosen carrier and the second forces HTTP/2, because networks that drop
+  /// QUIC outright only pass the TCP 443 carrier. The native Android service
+  /// also races h3→h2 on its own inside the first attempt; running the h2
+  /// attempt again later is harmless.
   static List<Protocol> smartLadder(VpnSettings settings) {
     if (settings.protocol != Protocol.smart) {
       return [settings.protocol];
