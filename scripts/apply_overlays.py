@@ -23,6 +23,44 @@ def copy_tree(src: Path, dst: Path) -> None:
         print("copied", rel)
 
 
+def _ensure_kts_packaging(text: str) -> str:
+    """Ensure Kotlin DSL has packaging.jniLibs.useLegacyPackaging = true"""
+    if "useLegacyPackaging" in text:
+        return text
+    # Insert packaging block right after android {
+    # Find first android { occurrence
+    m = re.search(r"android\s*\{", text)
+    if m:
+        insert_pos = m.end()
+        packaging_block = """
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+"""
+        text = text[:insert_pos] + packaging_block + text[insert_pos:]
+    return text
+
+
+def _ensure_groovy_packaging(text: str) -> str:
+    """Ensure Groovy DSL has packaging with useLegacyPackaging true"""
+    if "useLegacyPackaging" in text:
+        return text
+    m = re.search(r"android\s*\{", text)
+    if m:
+        insert_pos = m.end()
+        packaging_block = """
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+"""
+        text = text[:insert_pos] + packaging_block + text[insert_pos:]
+    return text
+
+
 def patch_android_gradle() -> None:
     gradle = ROOT / "android" / "app" / "build.gradle.kts"
     groovy = ROOT / "android" / "app" / "build.gradle"
@@ -31,25 +69,42 @@ def patch_android_gradle() -> None:
         print("android gradle missing")
         return
     text = path.read_text(encoding="utf-8")
+
+    # Patch min/target SDK
     text = re.sub(r"minSdk\s*=\s*.+", "minSdk = 24", text)
     text = re.sub(r"minSdkVersion\s+.+", "minSdkVersion 24", text)
     text = re.sub(r"targetSdk\s*=\s*.+", "targetSdk = 35", text)
     text = re.sub(r"targetSdkVersion\s+.+", "targetSdkVersion 35", text)
-    if "ndk" not in text:
-        text = text.replace(
-            "defaultConfig {",
-            """defaultConfig {
+
+    # Ensure NDK abiFilters
+    if "abiFilters" not in text:
+        if path.suffix == ".kts":
+            text = text.replace(
+                "defaultConfig {",
+                """defaultConfig {
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
         }""",
-            1,
-        ) if path.suffix == ".kts" else text.replace(
-            "defaultConfig {",
-            """defaultConfig {
+                1,
+            )
+        else:
+            text = text.replace(
+                "defaultConfig {",
+                """defaultConfig {
         ndk { abiFilters "armeabi-v7a", "arm64-v8a", "x86_64" }""",
-            1,
-        )
-    signing = '''
+                1,
+            )
+
+    # Ensure packaging legacy for extractNativeLibs=true compatibility
+    # AGP 8.1+ removed android.bundle.enableUncompressedNativeLibs
+    # Replacement is packaging.jniLibs.useLegacyPackaging
+    if path.suffix == ".kts":
+        text = _ensure_kts_packaging(text)
+    else:
+        text = _ensure_groovy_packaging(text)
+
+    # Signing config for KTS
+    signing_kts = '''
     val store = System.getenv("ANDROID_KEYSTORE_PATH")
     if (!store.isNullOrBlank()) {
         signingConfigs {
@@ -62,31 +117,79 @@ def patch_android_gradle() -> None:
         }
     }
 '''
-    if "ANDROID_KEYSTORE_PATH" not in text and path.suffix == ".kts":
-        text = text.replace("buildTypes {", signing + "\n    buildTypes {", 1)
-        text = text.replace(
-            "isMinifyEnabled = false",
-            """isMinifyEnabled = false
+    signing_groovy = '''
+    def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    if (keystorePath) {
+        signingConfigs {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: "nimbus"
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+            }
+        }
+    }
+'''
+
+    if "ANDROID_KEYSTORE_PATH" not in text:
+        if path.suffix == ".kts":
+            text = text.replace("buildTypes {", signing_kts + "\n    buildTypes {", 1)
+            text = text.replace(
+                "isMinifyEnabled = false",
+                """isMinifyEnabled = false
             signingConfig = if (signingConfigs.findByName("release") != null)
                 signingConfigs.getByName("release") else signingConfigs.getByName("debug")""",
-            1,
-        )
+                1,
+            )
+        else:
+            # Groovy signing
+            text = text.replace("buildTypes {", signing_groovy + "\n    buildTypes {", 1)
+            # For groovy, set signingConfig in release
+            if "signingConfig signingConfigs.release" not in text:
+                text = re.sub(
+                    r"buildTypes\s*\{\s*release\s*\{",
+                    "buildTypes {\n        release {\n            if (signingConfigs.findByName(\"release\") != null) { signingConfig signingConfigs.release }",
+                    text,
+                    count=1,
+                )
+
     path.write_text(text, encoding="utf-8")
     print("patched", path.relative_to(ROOT))
 
-    manifest = ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
-    if manifest.exists():
-        # overlay already copied
-        pass
-
+    # Fix gradle.properties - REMOVE deprecated property (removed in AGP 8.1)
     props = ROOT / "android" / "gradle.properties"
     if props.exists():
         p = props.read_text(encoding="utf-8")
-        if "android.bundle.enableUncompressedNativeLibs" not in p:
-            props.write_text(
-                p + "\nandroid.bundle.enableUncompressedNativeLibs=false\n",
-                encoding="utf-8",
-            )
+        original = p
+        # Remove any line containing android.bundle.enableUncompressedNativeLibs
+        lines = []
+        for line in p.splitlines():
+            if "android.bundle.enableUncompressedNativeLibs" in line:
+                print(f"removing deprecated property: {line.strip()}")
+                continue
+            # Also remove old packaging legacy flag if mistakenly added as property
+            lines.append(line)
+        new_p = "\n".join(lines)
+        # Ensure file ends with newline
+        if new_p and not new_p.endswith("\n"):
+            new_p += "\n"
+        if new_p != original:
+            props.write_text(new_p, encoding="utf-8")
+            print("patched gradle.properties - removed deprecated enableUncompressedNativeLibs")
+
+    # Also check if settings.gradle.kts or gradle.properties elsewhere has the flag
+    for extra_props in [
+        ROOT / "android" / "app" / "gradle.properties",
+        ROOT / "android" / "local.properties",
+    ]:
+        if extra_props.exists():
+            ep = extra_props.read_text(encoding="utf-8")
+            if "android.bundle.enableUncompressedNativeLibs" in ep:
+                cleaned = "\n".join(
+                    l for l in ep.splitlines() if "android.bundle.enableUncompressedNativeLibs" not in l
+                )
+                extra_props.write_text(cleaned + "\n", encoding="utf-8")
+                print(f"cleaned deprecated property from {extra_props.relative_to(ROOT)}")
 
 
 def patch_windows() -> None:
@@ -119,12 +222,20 @@ def patch_windows() -> None:
     cmake = ROOT / "windows" / "CMakeLists.txt"
     if cmake.exists():
         t = cmake.read_text(encoding="utf-8")
+        # Ensure WINVER is defined for Win8.1+ support
         if "WINVER=0x0603" not in t:
             t = t.replace(
                 "cmake_minimum_required",
                 "add_definitions(-DWINVER=0x0603 -D_WIN32_WINNT=0x0603)\ncmake_minimum_required",
                 1,
             )
+        # Fix for VS2019 vs VS2022: ensure we don't force old generator
+        # Remove any hardcoded Visual Studio 16 2019 generator if present
+        t = re.sub(r'Visual Studio 16 2019', 'Visual Studio 17 2022', t)
+        # Ensure CMake minimum is not too old for VS2022
+        # Flutter 3.27 uses 3.14, which is okay for VS2022 but we can bump to 3.20 for safety
+        # Keep original minimum to avoid breaking
+
         extra = """
 file(GLOB NIMBUS_SIDECARS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/windows/*")
 if(NIMBUS_SIDECARS)
@@ -135,6 +246,16 @@ endif()
             t += "\n" + extra
         cmake.write_text(t, encoding="utf-8")
         print("patched windows CMakeLists")
+
+    # Also patch windows/flutter/CMakeLists.txt if it exists to avoid generator issues
+    flutter_cmake = ROOT / "windows" / "flutter" / "CMakeLists.txt"
+    if flutter_cmake.exists():
+        ft = flutter_cmake.read_text(encoding="utf-8")
+        # No specific fix needed, but ensure no VS2019 hardcoded
+        ft_new = re.sub(r'Visual Studio 16 2019', 'Visual Studio 17 2022', ft)
+        if ft_new != ft:
+            flutter_cmake.write_text(ft_new, encoding="utf-8")
+            print("patched windows/flutter CMakeLists")
 
     ico_src = ROOT / "assets" / "branding" / "icon.ico"
     ico_dst = ROOT / "windows" / "runner" / "resources" / "app_icon.ico"
