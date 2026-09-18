@@ -33,8 +33,12 @@ class VpnController extends ChangeNotifier {
   Timer? _updateTimer;
   Timer? _statsTimer;
   Timer? _clock;
+  Timer? _watchdogTimer;
   StreamSubscription? _events;
   StreamSubscription? _winLogs;
+  bool _wantUp = false;
+  int _watchdogTries = 0;
+  DateTime? _lastHealthy;
 
   S get s {
     final sys = PlatformDispatcher.instance.locale.languageCode;
@@ -82,6 +86,9 @@ class VpnController extends ChangeNotifier {
   Future<void> refreshUpdate() async {
     update = await updates.check();
     notifyListeners();
+    if (update?.available == true && settings.autoDownload && !downloading) {
+      unawaited(downloadUpdate());
+    }
   }
 
   Future<void> openUpdate() async {
@@ -138,6 +145,7 @@ class VpnController extends ChangeNotifier {
 
   Future<void> connect() async {
     if (busy) return;
+    _wantUp = true;
     busy = true;
     _set(snapshot.copyWith(
       phase: EnginePhase.preparing,
@@ -177,6 +185,8 @@ class VpnController extends ChangeNotifier {
           await engine.start(attempt, protocol: proto);
           final up = await _waitConnected();
           if (up) {
+            _watchdogTries = 0;
+            _lastHealthy = DateTime.now();
             _set(snapshot.copyWith(
               phase: EnginePhase.connected,
               protocol: proto.name,
@@ -199,6 +209,7 @@ class VpnController extends ChangeNotifier {
         }
       }
       _set(snapshot.copyWith(phase: EnginePhase.error, message: lastError));
+      _scheduleWatchdog();
     } finally {
       busy = false;
       notifyListeners();
@@ -206,6 +217,9 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _wantUp = false;
+    _watchdogTries = 0;
+    _watchdogTimer?.cancel();
     busy = true;
     _statsTimer?.cancel();
     _clock?.cancel();
@@ -250,7 +264,9 @@ class VpnController extends ChangeNotifier {
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       if (snapshot.phase != EnginePhase.connected) return;
       try {
-        final probe = await SocksProbe.cloudflareTrace();
+        final probe = await SocksProbe.cloudflareTrace(
+          port: settings.socksPort,
+        );
         final map = SocksProbe.parseTrace(probe.body);
         _set(snapshot.copyWith(
           pingMs: probe.pingMs,
@@ -260,7 +276,17 @@ class VpnController extends ChangeNotifier {
             map['colo'] ?? '',
           ].where((e) => e.isNotEmpty).join(' · '),
         ));
-      } catch (_) {}
+        _lastHealthy = DateTime.now();
+      } catch (_) {
+        final last = _lastHealthy;
+        if (settings.watchdog &&
+            last != null &&
+            DateTime.now().difference(last).inSeconds >= settings.stallTimeout) {
+          _log('watchdog: stall ${settings.stallTimeout}s');
+          _set(snapshot.copyWith(phase: EnginePhase.error, message: 'stalled'));
+          _scheduleWatchdog();
+        }
+      }
       try {
         final st = await engine.status();
         _set(snapshot.copyWith(
@@ -295,7 +321,30 @@ class VpnController extends ChangeNotifier {
         uploadBytes:
             int.tryParse('${event['upload'] ?? ''}') ?? snapshot.uploadBytes,
       ));
+      if (phase == EnginePhase.error) {
+        _scheduleWatchdog();
+      }
+      if (phase == EnginePhase.connected) {
+        _watchdogTries = 0;
+        _lastHealthy = DateTime.now();
+      }
     }
+  }
+
+  void _scheduleWatchdog() {
+    if (!_wantUp || !settings.watchdog || _watchdogTries >= 5) return;
+    _watchdogTries++;
+    _watchdogTimer?.cancel();
+    final delay = Duration(seconds: 2 * _watchdogTries);
+    _watchdogTimer = Timer(delay, () {
+      if (_wantUp &&
+          snapshot.phase != EnginePhase.connected &&
+          snapshot.phase != EnginePhase.connecting &&
+          snapshot.phase != EnginePhase.scanning &&
+          snapshot.phase != EnginePhase.preparing) {
+        unawaited(connect());
+      }
+    });
   }
 
   void log(String line) => _log(line);
@@ -328,6 +377,7 @@ class VpnController extends ChangeNotifier {
     _updateTimer?.cancel();
     _statsTimer?.cancel();
     _clock?.cancel();
+    _watchdogTimer?.cancel();
     super.dispose();
   }
 }

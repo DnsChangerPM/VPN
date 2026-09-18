@@ -31,7 +31,10 @@ class PlatformEngine {
       ...settings.toJson(),
       'args': AetherLaunch.build(settings, override: protocol),
       'protocol': (protocol ?? settings.protocol).name,
-      'socksPort': AetherLaunch.socksPort,
+      'socksPort': settings.socksPort,
+      'tunMtu': settings.effectiveMtu,
+      'killSwitch': settings.killSwitch,
+      'bypassLan': settings.bypassLan,
     };
     if (Platform.isAndroid) {
       return _channel.invokeMethod('start', cfg);
@@ -114,7 +117,10 @@ class WindowsEngine {
   String protocol = '';
   String? _originalGw;
   String? _originalIf;
+  int _socksPort = 1819;
+  bool _bypassLan = true;
   final _bypass = <String>{};
+  final _lanBypass = <String>[];
 
   Stream<String> get logs => _logs.stream;
 
@@ -145,6 +151,8 @@ class WindowsEngine {
     if (!aether.existsSync()) {
       throw FileSystemException('aether.exe not found', aether.path);
     }
+    _socksPort = settings.socksPort;
+    _bypassLan = settings.bypassLan;
     final args = AetherLaunch.build(settings, override: protocol);
     _aether = await Process.start(
       aether.path,
@@ -152,6 +160,7 @@ class WindowsEngine {
       workingDirectory: dir,
       environment: {
         ...Platform.environment,
+        ...AetherLaunch.environment(settings),
         'AETHER_PROTOCOL': this.protocol == 'mim' ? 'masque' : this.protocol,
       },
     );
@@ -180,16 +189,17 @@ class WindowsEngine {
       final admin = await isAdmin();
       if (!admin) {
         phase = EnginePhase.connected;
-        message = 'SOCKS5 127.0.0.1:1819 (VPN needs Administrator)';
+        message =
+            'SOCKS5 127.0.0.1:$_socksPort (VPN needs Administrator)';
         _emit();
         return;
       }
-      await _startTun(dir);
+      await _startTun(dir, settings);
     }
     phase = EnginePhase.connected;
     message = settings.mode == ConnectionMode.vpn
         ? 'System VPN active'
-        : 'SOCKS5 127.0.0.1:1819';
+        : 'SOCKS5 127.0.0.1:$_socksPort';
     _emit();
   }
 
@@ -226,7 +236,7 @@ class WindowsEngine {
   Future<bool> _waitSocks() async {
     for (var i = 0; i < 90; i++) {
       try {
-        final s = await Socket.connect('127.0.0.1', AetherLaunch.socksPort,
+        final s = await Socket.connect('127.0.0.1', _socksPort,
             timeout: const Duration(seconds: 1));
         s.destroy();
         return true;
@@ -284,7 +294,7 @@ class WindowsEngine {
     }
   }
 
-  Future<void> _startTun(String dir) async {
+  Future<void> _startTun(String dir, VpnSettings settings) async {
     await _captureGateway();
     final tun2socks = File(p.join(dir, 'tun2socks.exe'));
     if (!tun2socks.existsSync()) {
@@ -297,7 +307,7 @@ class WindowsEngine {
         '-device',
         'tun://Nimbus',
         '-proxy',
-        'socks5://127.0.0.1:${AetherLaunch.socksPort}',
+        'socks5://127.0.0.1:$_socksPort',
         '-loglevel',
         'info',
       ],
@@ -354,6 +364,19 @@ class WindowsEngine {
       ['add', '0.0.0.0', 'mask', '0.0.0.0', '198.18.0.1', 'metric', '5'],
       runInShell: true,
     );
+    if (_bypassLan && _originalGw != null) {
+      const lan = [
+        ['10.0.0.0', '255.0.0.0'],
+        ['172.16.0.0', '255.240.0.0'],
+        ['192.168.0.0', '255.255.0.0'],
+      ];
+      for (final row in lan) {
+        await Process.run(
+            'route', ['add', row[0], 'mask', row[1], _originalGw!],
+            runInShell: true);
+        _lanBypass.add(row[0]);
+      }
+    }
   }
 
   Future<void> _restoreRoutes() async {
@@ -365,9 +388,15 @@ class WindowsEngine {
         await Process.run('route', ['delete', ip], runInShell: true);
       }
     }
+    if (_originalGw != null) {
+      for (final ip in _lanBypass) {
+        await Process.run('route', ['delete', ip], runInShell: true);
+      }
+    }
     await Process.run('netsh', ['interface', 'set', 'interface', 'Nimbus', 'admin=disable'],
         runInShell: true);
     _bypass.clear();
+    _lanBypass.clear();
   }
 
   void _emit() {

@@ -42,6 +42,18 @@ object NimbusPlugin {
                         NimbusVpnService.EXTRA_SPLIT_APPS,
                         ArrayList((args["splitApps"] as? List<*>)?.map { "$it" } ?: emptyList())
                     )
+                    fun num(key: String, d: Int): Int {
+                        val v = args[key]
+                        return when (v) {
+                            is Number -> v.toInt()
+                            else -> v?.toString()?.toIntOrNull() ?: d
+                        }
+                    }
+                    intent.putExtra(NimbusVpnService.EXTRA_SOCKS_PORT, num("socksPort", 1819))
+                    intent.putExtra(NimbusVpnService.EXTRA_MTU, num("tunMtu", 1400))
+                    intent.putExtra(NimbusVpnService.EXTRA_KILL, args["killSwitch"] != false)
+                    intent.putExtra(NimbusVpnService.EXTRA_BYPASS_LAN, args["bypassLan"] != false)
+                    intent.putExtra(NimbusVpnService.EXTRA_IPV6, args["ipv6Tunnel"] == true)
                     if (Build.VERSION.SDK_INT >= 26) {
                         activity.startForegroundService(intent)
                     } else {
@@ -56,7 +68,11 @@ object NimbusPlugin {
                     )
                     result.success(null)
                 }
-                "status" -> result.success(mapOf("phase" to "unknown"))
+                "status" -> result.success(
+                    mapOf(
+                        "phase" to if (NimbusVpnService.running.get()) "connected" else "disconnected",
+                    )
+                )
                 "listApps" -> result.success(listApps(activity))
                 "recover" -> result.success(null)
                 "installApk" -> {

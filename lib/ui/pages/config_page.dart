@@ -174,9 +174,87 @@ class ConfigPage extends StatelessWidget {
         if (st.lanShare)
           Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: Text('${s.lanAddress}: 0.0.0.0:1819',
+            child: Text('${s.lanAddress}: 0.0.0.0:${st.socksPort}',
                 style: const TextStyle(color: NimbusColors.muted)),
           ),
+        SwitchListTile(
+          value: st.bypassLan,
+          title: Text(s.bypassLan),
+          subtitle: Text(s.bypassLanHelp),
+          onChanged: (v) {
+            st.bypassLan = v;
+            c.persist();
+          },
+        ),
+        SwitchListTile(
+          value: st.ipv6Tunnel,
+          title: Text(s.ipv6Tunnel),
+          onChanged: (v) {
+            st.ipv6Tunnel = v;
+            c.persist();
+          },
+        ),
+        SwitchListTile(
+          value: st.watchdog,
+          title: Text(s.watchdog),
+          subtitle: Text(s.watchdogHelp),
+          onChanged: (v) {
+            st.watchdog = v;
+            c.persist();
+          },
+        ),
+        _label(s.advanced),
+        _label(s.socksPort),
+        TextFormField(
+          initialValue: '${st.socksPort}',
+          keyboardType: TextInputType.number,
+          onChanged: (v) {
+            st.socksPort = int.tryParse(v) ?? 1819;
+          },
+          onFieldSubmitted: (_) => c.persist(),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: NimbusColors.surface,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        _label(s.keepalive),
+        TextFormField(
+          initialValue: '${st.keepalive}',
+          keyboardType: TextInputType.number,
+          onChanged: (v) => st.keepalive = int.tryParse(v) ?? 5,
+          onFieldSubmitted: (_) => c.persist(),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: NimbusColors.surface,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        _label(s.tunMtu),
+        TextFormField(
+          initialValue: '${st.tunMtu}',
+          keyboardType: TextInputType.number,
+          onChanged: (v) => st.tunMtu = int.tryParse(v) ?? 1400,
+          onFieldSubmitted: (_) => c.persist(),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: NimbusColors.surface,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            helperText: 'effective ${st.effectiveMtu}',
+          ),
+        ),
+        _label(s.stallTimeout),
+        TextFormField(
+          initialValue: '${st.stallTimeout}',
+          keyboardType: TextInputType.number,
+          onChanged: (v) => st.stallTimeout = int.tryParse(v) ?? 90,
+          onFieldSubmitted: (_) => c.persist(),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: NimbusColors.surface,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
         const SizedBox(height: 18),
         OutlinedButton(
           onPressed: () {
@@ -220,13 +298,13 @@ class ConfigPage extends StatelessWidget {
 
   Widget _dropdown(
     String value,
-    List<String> items,
+    Map<String, String> items,
     ValueChanged<String> onChanged,
   ) {
     return DropdownButtonFormField<String>(
-      value: items.contains(value) ? value : items.first,
-      items: items
-          .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+      value: items.containsKey(value) ? value : items.keys.first,
+      items: items.entries
+          .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
           .toList(),
       onChanged: (v) {
         if (v != null) onChanged(v);

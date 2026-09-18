@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/engine_state.dart';
+import '../../models/settings.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/nimbus_theme.dart';
 import '../widgets/orb_button.dart';
@@ -89,6 +90,7 @@ class ConnectPage extends StatelessWidget {
               phase: snap.phase,
               label: label,
               hint: snap.phase == EnginePhase.disconnected ? s.tapToSecure : title,
+              mercury: c.settings.orbStyle == OrbStyle.mercury,
               onTap: c.toggle,
             ),
           ),
@@ -110,7 +112,9 @@ class ConnectPage extends StatelessWidget {
           ),
         TextButton(
           onPressed: () {
-            Clipboard.setData(const ClipboardData(text: '127.0.0.1:1819'));
+            Clipboard.setData(
+              ClipboardData(text: '127.0.0.1:${c.settings.socksPort}'),
+            );
             ScaffoldMessenger.of(context)
                 .showSnackBar(SnackBar(content: Text(s.copied)));
           },

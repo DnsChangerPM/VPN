@@ -19,7 +19,8 @@ Nimbus is **not** affiliated with CluvexStudio. Aether is a separate project wit
 | UI | Flutter | Flutter (compact 420×780 window) |
 | Core | Aether **v2.0.0** `libaether.so` | Aether **v2.0.0** `aether.exe` |
 | Device VPN | `VpnService` + [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) 2.17.1 | WinTUN + tun2socks (Administrator) |
-| Proxy | SOCKS5 `127.0.0.1:1819` | SOCKS5 `127.0.0.1:1819` |
+| Proxy | SOCKS5 `127.0.0.1:1819` (configurable) | SOCKS5 `127.0.0.1:1819` (configurable) |
+| Extras | QS tile, home widget, bypass LAN, MTU/keepalive/watchdog | Bypass LAN routes, keepalive, MTU, watchdog |
 | Minimum OS | **Android 7.0** (API 24) | **Windows 8.1** (6.3) through 11, x64 |
 | Updates | GitHub Releases API | GitHub Releases API |
 
@@ -34,6 +35,7 @@ GitHub Actions → **Release APK and EXE** → **Run workflow**. The form asks f
 Pushing a `v1.2.0` tag also publishes. Artifacts:
 
 - `Nimbus-VPN-vX.Y.Z-Android-Universal.apk`
+- `Nimbus-VPN-vX.Y.Z-Android-arm64-v8a.apk` / `armeabi-v7a` / `x86_64`
 - `Nimbus-VPN-vX.Y.Z-Windows-x64-Installer.exe`
 - `Nimbus-VPN-vX.Y.Z-Windows-x64-Portable.zip`
 - `SHA256SUMS.txt`

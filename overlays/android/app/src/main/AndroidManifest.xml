@@ -53,6 +53,18 @@
                 android:value="vpn"/>
         </service>
 
+        <receiver
+            android:name=".NimbusWidgetProvider"
+            android:exported="true"
+            android:label="Nimbus VPN">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/nimbus_widget_info"/>
+        </receiver>
+
         <service
             android:name=".NimbusTileService"
             android:exported="true"

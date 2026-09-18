@@ -1,7 +1,6 @@
 import '../models/settings.dart';
 
 class AetherLaunch {
-  static const socksPort = 1819;
   static const coreVersion = '2.0.0';
 
   static String noizeFor(Protocol protocol, String obfuscation) {
@@ -47,8 +46,10 @@ class AetherLaunch {
         }
       case Protocol.wg:
         args.add('--wg');
+        args.addAll(['--keepalive', '${settings.keepalive}']);
       case Protocol.gool:
         args.add('--gool');
+        args.addAll(['--keepalive', '${settings.keepalive}']);
       case Protocol.mim:
         args.add('--mim');
         if (settings.transport == MasqueTransport.h2) {
@@ -69,6 +70,11 @@ class AetherLaunch {
     }
     return args;
   }
+
+  static Map<String, String> environment(VpnSettings settings) => {
+        'AETHER_LOG': settings.logLevel,
+        'AETHER_MASQUE_MTU': '${settings.effectiveMtu}',
+      };
 
   static List<Protocol> smartLadder(VpnSettings settings) {
     if (settings.protocol != Protocol.smart) {

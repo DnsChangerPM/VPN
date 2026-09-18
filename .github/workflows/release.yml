@@ -105,7 +105,7 @@ jobs:
       - name: Build HEV JNI
         run: bash scripts/build_hev.sh
       - run: flutter pub get
-      - name: Build universal APK
+      - name: Build APKs (universal + per-ABI)
         env:
           ANDROID_KEYSTORE_PATH: ${{ secrets.ANDROID_KEYSTORE_PATH }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -117,12 +117,22 @@ jobs:
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/.android-signing/nimbus.jks
             export ANDROID_KEYSTORE_PATH="$GITHUB_WORKSPACE/android/.android-signing/nimbus.jks"
           fi
+          VER="${{ needs.version.outputs.version }}"
           flutter build apk --release \
             --target-platform android-arm,android-arm64,android-x64 \
-            --dart-define=NIMBUS_VERSION=${{ needs.version.outputs.version }}
+            --dart-define=NIMBUS_VERSION=$VER
+          flutter build apk --release --split-per-abi \
+            --target-platform android-arm,android-arm64,android-x64 \
+            --dart-define=NIMBUS_VERSION=$VER
           mkdir -p release
           cp build/app/outputs/flutter-apk/app-release.apk \
-            "release/Nimbus-VPN-v${{ needs.version.outputs.version }}-Android-Universal.apk"
+            "release/Nimbus-VPN-v${VER}-Android-Universal.apk"
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+            "release/Nimbus-VPN-v${VER}-Android-armeabi-v7a.apk"
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            "release/Nimbus-VPN-v${VER}-Android-arm64-v8a.apk"
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk \
+            "release/Nimbus-VPN-v${VER}-Android-x86_64.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
@@ -206,7 +216,10 @@ jobs:
           ${USER_NOTES}
 
           ### Downloads
-          - \`Nimbus-VPN-v${VERSION}-Android-Universal.apk\` — Android 7.0 (API 24) and newer
+          - \`Nimbus-VPN-v${VERSION}-Android-Universal.apk\` — Android 7.0 (API 24) and newer (all ABIs)
+          - \`Nimbus-VPN-v${VERSION}-Android-arm64-v8a.apk\` — 64-bit ARM (most phones)
+          - \`Nimbus-VPN-v${VERSION}-Android-armeabi-v7a.apk\` — 32-bit ARM
+          - \`Nimbus-VPN-v${VERSION}-Android-x86_64.apk\` — 64-bit x86 emulators
           - \`Nimbus-VPN-v${VERSION}-Windows-x64-Installer.exe\` — Windows 8.1 through 11 (x64)
           - \`Nimbus-VPN-v${VERSION}-Windows-x64-Portable.zip\` — portable Windows build
 

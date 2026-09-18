@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../models/engine_state.dart';
@@ -10,12 +12,14 @@ class OrbButton extends StatefulWidget {
     required this.label,
     required this.hint,
     required this.onTap,
+    this.mercury = true,
   });
 
   final EnginePhase phase;
   final String label;
   final String hint;
   final VoidCallback onTap;
+  final bool mercury;
 
   @override
   State<OrbButton> createState() => _OrbButtonState();
@@ -51,6 +55,35 @@ class _OrbButtonState extends State<OrbButton>
                 ? const [NimbusColors.cyan, NimbusColors.violet, NimbusColors.blue]
                 : const [Color(0xFFFF7680), Color(0xFF9D152C)];
 
+    final inner = Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          connected ? Icons.shield : Icons.power_settings_new,
+          size: 42,
+          color: Colors.white,
+        ),
+        const SizedBox(height: 10),
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 20,
+            letterSpacing: 1.4,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          widget.hint,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.78),
+            fontSize: 13,
+          ),
+        ),
+      ],
+    );
+
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
@@ -85,37 +118,22 @@ class _OrbButtonState extends State<OrbButton>
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: colors,
+                      colors: widget.mercury
+                          ? [
+                              colors[(_c.value * colors.length).floor() %
+                                  colors.length],
+                              colors.last,
+                              colors.first,
+                            ]
+                          : colors,
                     ),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        connected ? Icons.shield : Icons.power_settings_new,
-                        size: 42,
-                        color: Colors.white,
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        widget.label,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 20,
-                          letterSpacing: 1.4,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.hint,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.78),
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
+                  child: widget.mercury
+                      ? CustomPaint(
+                          painter: _MercuryPainter(t: _c.value, colors: colors),
+                          child: inner,
+                        )
+                      : inner,
                 ),
               ),
             ),
@@ -124,4 +142,53 @@ class _OrbButtonState extends State<OrbButton>
       },
     );
   }
+}
+
+class _MercuryPainter extends CustomPainter {
+  _MercuryPainter({required this.t, required this.colors});
+
+  final double t;
+  final List<Color> colors;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = size.shortestSide / 2;
+    final highlight = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(-0.35, -0.4),
+        colors: [
+          Colors.white.withValues(alpha: 0.35),
+          colors.first.withValues(alpha: 0.12),
+          Colors.transparent,
+        ],
+      ).createShader(Rect.fromCircle(center: c, radius: r));
+    canvas.drawCircle(c, r, highlight);
+    final blob = Paint()
+      ..color = colors.last.withValues(alpha: 0.28)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
+    canvas.drawCircle(
+      Offset(
+        c.dx + math.sin(t * math.pi * 2) * r * 0.22,
+        c.dy + math.cos(t * math.pi * 2.4) * r * 0.18,
+      ),
+      r * 0.46,
+      blob,
+    );
+    final blob2 = Paint()
+      ..color = colors.first.withValues(alpha: 0.22)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14);
+    canvas.drawCircle(
+      Offset(
+        c.dx + math.cos(t * math.pi * 2.7) * r * 0.2,
+        c.dy + math.sin(t * math.pi * 1.7) * r * 0.16,
+      ),
+      r * 0.32,
+      blob2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MercuryPainter old) =>
+      old.t != t || old.colors != colors;
 }

@@ -142,4 +142,25 @@ class S {
   String get freeNote => isFa
       ? 'کاملاً رایگان و متن‌باز. بدون حساب کاربری و بدون محدودیت ترافیک.'
       : 'Free and open source. No account and no traffic quota.';
+  String get bypassLan => isFa ? 'دور زدن شبکه محلی' : 'Bypass LAN';
+  String get bypassLanHelp => isFa
+      ? 'ترافیک 192.168/10/172.16 از تونل نرود'
+      : 'Keep RFC1918 LAN off the tunnel';
+  String get ipv6Tunnel => isFa ? 'تونل IPv6' : 'Tunnel IPv6';
+  String get watchdog => isFa ? 'نگهبان اتصال' : 'Connection watchdog';
+  String get watchdogHelp => isFa
+      ? 'اگر هسته افتاد، خودش دوباره وصل شود'
+      : 'Reconnect automatically if the core drops';
+  String get advanced => isFa ? 'پیشرفته' : 'Advanced';
+  String get socksPort => isFa ? 'پورت SOCKS' : 'SOCKS port';
+  String get keepalive => isFa ? 'Keepalive (ثانیه)' : 'Keepalive (seconds)';
+  String get tunMtu => 'TUN MTU';
+  String get stallTimeout => isFa ? 'مهلت ایست (ثانیه)' : 'Stall timeout (seconds)';
+  String get orbStyle => isFa ? 'سبک دکمه اتصال' : 'Orb style';
+  String get orbClassic => isFa ? 'کلاسیک' : 'Classic';
+  String get orbMercury => isFa ? 'جیوه زنده' : 'Living mercury';
+  String get autoDownload => isFa ? 'دانلود خودکار به‌روزرسانی' : 'Auto-download updates';
+  String get qsTile => isFa
+      ? 'کاشی تنظیمات سریع و ویجت صفحه اصلی را از لانچر اضافه کنید'
+      : 'Add the Quick Settings tile and home widget from your launcher';
 }

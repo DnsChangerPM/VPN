@@ -41,6 +41,17 @@ class SettingsPage extends StatelessWidget {
           st.language = LanguageChoice.values.firstWhere((e) => e.name == v);
           c.persist();
         }),
+        Padding(
+          padding: const EdgeInsets.only(top: 18, bottom: 8),
+          child: Text(s.orbStyle, style: const TextStyle(color: NimbusColors.muted)),
+        ),
+        _seg(st.orbStyle.name, {
+          'classic': s.orbClassic,
+          'mercury': s.orbMercury,
+        }, (v) {
+          st.orbStyle = OrbStyle.values.firstWhere((e) => e.name == v);
+          c.persist();
+        }),
         SwitchListTile(
           value: st.notifications,
           title: Text(s.notifications),
@@ -70,6 +81,18 @@ class SettingsPage extends StatelessWidget {
             st.autoUpdate = v;
             c.persist();
           },
+        ),
+        SwitchListTile(
+          value: st.autoDownload,
+          title: Text(s.autoDownload),
+          onChanged: (v) {
+            st.autoDownload = v;
+            c.persist();
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Text(s.qsTile, style: const TextStyle(color: NimbusColors.muted, fontSize: 12)),
         ),
         ListTile(
           title: Text(s.currentVersion),
