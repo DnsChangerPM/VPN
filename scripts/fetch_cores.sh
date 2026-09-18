@@ -7,6 +7,35 @@ HEV_TAG="${HEV_TAG:-2.17.1}"
 TUN2SOCKS_TAG="${TUN2SOCKS_TAG:-v2.6.0}"
 WINTUN_URL="${WINTUN_URL:-https://www.wintun.net/builds/wintun-0.14.1.zip}"
 
+# Target comes from the first positional argument, falling back to the
+# TARGET environment variable and finally to "all".
+TARGET="${1:-${TARGET:-all}}"
+case "$TARGET" in
+  all|android|windows) ;;
+  *)
+    echo "usage: $0 [all|android|windows] (got '$TARGET')" >&2
+    exit 1
+    ;;
+esac
+
+# Locate a working Python interpreter. "python3" is not guaranteed to exist
+# on Windows runners (Git Bash usually exposes "python" or the "py" launcher,
+# and the Microsoft Store python3.exe stub exits non-zero), so probe each
+# candidate before using it.
+PYTHON=()
+for cand in python3 python "py -3"; do
+  # shellcheck disable=SC2086
+  if $cand -c 'import sys' >/dev/null 2>&1; then
+    # shellcheck disable=SC2206
+    PYTHON=($cand)
+    break
+  fi
+done
+if [[ ${#PYTHON[@]} -eq 0 ]]; then
+  echo "error: no usable Python interpreter found (tried python3, python, 'py -3')" >&2
+  exit 1
+fi
+
 mkdir -p "$ROOT/third_party/windows" "$ROOT/android/app/src/main/jniLibs"
 
 sha_ok() {
@@ -47,7 +76,7 @@ stage_aether_windows() {
   if [[ -f "$tmp/aether-windows-x86_64.zip.sha256" ]]; then
     (cd "$tmp" && sha256sum -c aether-windows-x86_64.zip.sha256 || true)
   fi
-  python3 - "$tmp" <<'PY'
+  "${PYTHON[@]}" - "$tmp" <<'PY'
 import zipfile, sys
 from pathlib import Path
 z = Path(sys.argv[1]) / "aether-windows-x86_64.zip"
@@ -60,7 +89,7 @@ PY
 stage_tun2socks() {
   local tmp="$ROOT/third_party/tun2socks"
   mkdir -p "$tmp" "$ROOT/third_party/windows"
-  python3 - "$tmp" "$ROOT/third_party/windows" <<'PY'
+  "${PYTHON[@]}" - "$tmp" "$ROOT/third_party/windows" <<'PY'
 import json, shutil, sys, urllib.request, zipfile
 from pathlib import Path
 src, dest = Path(sys.argv[1]), Path(sys.argv[2])
@@ -96,7 +125,7 @@ stage_wintun() {
   local tmp="$ROOT/third_party/wintun"
   mkdir -p "$tmp"
   download "$WINTUN_URL" "$tmp/wintun.zip"
-  python3 - "$tmp" "$ROOT/third_party/windows" <<'PY'
+  "${PYTHON[@]}" - "$tmp" "$ROOT/third_party/windows" <<'PY'
 import zipfile, shutil, sys
 from pathlib import Path
 src, dest = Path(sys.argv[1]), Path(sys.argv[2])

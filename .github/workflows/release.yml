@@ -82,7 +82,13 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-      - uses: android-actions/setup-android@v3
+      # v3 defaults to installing the legacy "tools" package, which Google
+      # removed from the SDK repository ("Failed to find package 'tools'").
+      # v4 runs on node24 and defaults to platform-tools; pass it explicitly
+      # so the list cannot regress if the action's default changes again.
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
       - name: Install NDK
         run: |
           yes | sdkmanager --licenses >/dev/null || true
