@@ -1,0 +1,102 @@
+enum EnginePhase {
+  disconnected,
+  preparing,
+  scanning,
+  connecting,
+  connected,
+  reconnecting,
+  disconnecting,
+  error,
+}
+
+class EngineSnapshot {
+  const EngineSnapshot({
+    this.phase = EnginePhase.disconnected,
+    this.message = '',
+    this.protocol = '',
+    this.endpoint = '',
+    this.downloadBytes = 0,
+    this.uploadBytes = 0,
+    this.pingMs,
+    this.location = '',
+    this.ip = '',
+    this.connectedAt,
+  });
+
+  final EnginePhase phase;
+  final String message;
+  final String protocol;
+  final String endpoint;
+  final int downloadBytes;
+  final int uploadBytes;
+  final int? pingMs;
+  final String location;
+  final String ip;
+  final DateTime? connectedAt;
+
+  bool get isActive =>
+      phase == EnginePhase.connected ||
+      phase == EnginePhase.connecting ||
+      phase == EnginePhase.scanning ||
+      phase == EnginePhase.reconnecting ||
+      phase == EnginePhase.preparing;
+
+  bool get canToggle =>
+      phase == EnginePhase.disconnected ||
+      phase == EnginePhase.connected ||
+      phase == EnginePhase.error;
+
+  EngineSnapshot copyWith({
+    EnginePhase? phase,
+    String? message,
+    String? protocol,
+    String? endpoint,
+    int? downloadBytes,
+    int? uploadBytes,
+    int? pingMs,
+    String? location,
+    String? ip,
+    DateTime? connectedAt,
+    bool clearConnectedAt = false,
+  }) {
+    return EngineSnapshot(
+      phase: phase ?? this.phase,
+      message: message ?? this.message,
+      protocol: protocol ?? this.protocol,
+      endpoint: endpoint ?? this.endpoint,
+      downloadBytes: downloadBytes ?? this.downloadBytes,
+      uploadBytes: uploadBytes ?? this.uploadBytes,
+      pingMs: pingMs ?? this.pingMs,
+      location: location ?? this.location,
+      ip: ip ?? this.ip,
+      connectedAt:
+          clearConnectedAt ? null : (connectedAt ?? this.connectedAt),
+    );
+  }
+}
+
+class LogLine {
+  LogLine(this.text, {DateTime? at}) : at = at ?? DateTime.now();
+  final DateTime at;
+  final String text;
+}
+
+class UpdateInfo {
+  const UpdateInfo({
+    required this.current,
+    this.latest,
+    this.notes = '',
+    this.apkUrl,
+    this.exeUrl,
+    this.htmlUrl,
+    this.available = false,
+  });
+
+  final String current;
+  final String? latest;
+  final String notes;
+  final String? apkUrl;
+  final String? exeUrl;
+  final String? htmlUrl;
+  final bool available;
+}

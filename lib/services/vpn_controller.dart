@@ -1,0 +1,291 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../l10n/strings.dart';
+import '../models/engine_state.dart';
+import '../models/settings.dart';
+import 'aether_args.dart';
+import 'platform_engine.dart';
+import 'socks_probe.dart';
+import 'update_service.dart';
+
+class VpnController extends ChangeNotifier {
+  VpnController();
+
+  final engine = PlatformEngine();
+  final updates = UpdateService();
+
+  VpnSettings settings = VpnSettings();
+  EngineSnapshot snapshot = const EngineSnapshot();
+  UpdateInfo? update;
+  final logs = <LogLine>[];
+  bool busy = false;
+  String? toast;
+  Timer? _updateTimer;
+  Timer? _statsTimer;
+  StreamSubscription? _events;
+  StreamSubscription? _winLogs;
+
+  S get s {
+    final sys = PlatformDispatcher.instance.locale.languageCode;
+    final code = settings.language == LanguageChoice.system
+        ? sys
+        : settings.language.name;
+    return S(code == 'fa' ? 'fa' : 'en');
+  }
+
+  bool get rtl => s.isFa;
+
+  Future<void> boot() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('settings');
+    if (raw != null) {
+      settings = VpnSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    }
+    _events = engine.events().listen(_onEvent, onError: (_) {});
+    if (Platform.isWindows) {
+      _winLogs = WindowsEngine.instance.logs.listen((line) => _log(line));
+    }
+    notifyListeners();
+    unawaited(refreshUpdate());
+    _updateTimer = Timer.periodic(const Duration(hours: 12), (_) {
+      if (settings.autoUpdate) unawaited(refreshUpdate());
+    });
+    if (settings.autoConnect) {
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await toggle();
+    }
+  }
+
+  Future<void> persist() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('settings', jsonEncode(settings.toJson()));
+    notifyListeners();
+  }
+
+  Future<void> refreshUpdate() async {
+    update = await updates.check();
+    notifyListeners();
+  }
+
+  Future<void> openUpdate() async {
+    final info = update;
+    if (info == null) return;
+    final url = Platform.isAndroid
+        ? (info.apkUrl ?? info.htmlUrl)
+        : (info.exeUrl ?? info.htmlUrl);
+    if (url == null) return;
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> toggle() async {
+    if (busy) return;
+    if (snapshot.phase == EnginePhase.connected) {
+      await disconnect();
+      return;
+    }
+    await connect();
+  }
+
+  Future<void> connect() async {
+    if (busy) return;
+    busy = true;
+    _set(snapshot.copyWith(
+      phase: EnginePhase.preparing,
+      message: s.preparing,
+    ));
+    try {
+      if (settings.mode == ConnectionMode.vpn && Platform.isAndroid) {
+        final ok = await engine.prepareVpn();
+        if (!ok) {
+          _set(snapshot.copyWith(
+            phase: EnginePhase.error,
+            message: s.needVpnPerm,
+          ));
+          return;
+        }
+      }
+      if (settings.mode == ConnectionMode.vpn && Platform.isWindows) {
+        final admin = await engine.isElevated();
+        if (!admin) {
+          _log(s.needAdmin);
+        }
+      }
+      final ladder = AetherLaunch.smartLadder(settings);
+      var lastError = 'connect failed';
+      for (var i = 0; i < ladder.length; i++) {
+        var proto = ladder[i];
+        final attempt = settings.copyWithProtocol(proto);
+        if (settings.protocol == Protocol.smart && i == 1) {
+          attempt.transport = MasqueTransport.h2;
+        }
+        _set(snapshot.copyWith(
+          phase: EnginePhase.scanning,
+          protocol: proto.name,
+          message: 'Aether ${proto.name}',
+        ));
+        try {
+          await engine.start(attempt, protocol: proto);
+          final up = await _waitConnected();
+          if (up) {
+            _set(snapshot.copyWith(
+              phase: EnginePhase.connected,
+              protocol: proto.name,
+              message: s.active,
+              connectedAt: DateTime.now(),
+            ));
+            _startStats();
+            return;
+          }
+          lastError = snapshot.message.isEmpty ? 'timeout' : snapshot.message;
+          await engine.stop();
+        } catch (e) {
+          lastError = '$e';
+          _log('$e');
+          await engine.stop();
+        }
+      }
+      _set(snapshot.copyWith(phase: EnginePhase.error, message: lastError));
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> disconnect() async {
+    busy = true;
+    _statsTimer?.cancel();
+    _set(snapshot.copyWith(phase: EnginePhase.disconnecting, message: s.disconnecting));
+    try {
+      await engine.stop();
+    } finally {
+      busy = false;
+      _set(const EngineSnapshot());
+    }
+  }
+
+  Future<bool> _waitConnected() async {
+    for (var i = 0; i < 120; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (snapshot.phase == EnginePhase.error) return false;
+      if (snapshot.phase == EnginePhase.connected) return true;
+      try {
+        final st = await engine.status();
+        final phase = st['phase']?.toString() ?? '';
+        if (phase == 'connected') {
+          _set(snapshot.copyWith(
+            phase: EnginePhase.connected,
+            endpoint: st['endpoint']?.toString() ?? snapshot.endpoint,
+            protocol: st['protocol']?.toString() ?? snapshot.protocol,
+          ));
+          return true;
+        }
+        if (phase == 'error') return false;
+      } catch (_) {}
+      if (Platform.isWindows &&
+          WindowsEngine.instance.phase == EnginePhase.connected) {
+        _set(snapshot.copyWith(phase: EnginePhase.connected));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _startStats() {
+    _statsTimer?.cancel();
+    _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (snapshot.phase != EnginePhase.connected) return;
+      try {
+        final probe = await SocksProbe.cloudflareTrace();
+        final map = SocksProbe.parseTrace(probe.body);
+        _set(snapshot.copyWith(
+          pingMs: probe.pingMs,
+          ip: map['ip'] ?? snapshot.ip,
+          location: [
+            map['loc'] ?? '',
+            map['colo'] ?? '',
+          ].where((e) => e.isNotEmpty).join(' · '),
+        ));
+      } catch (_) {}
+      try {
+        final st = await engine.status();
+        _set(snapshot.copyWith(
+          downloadBytes: int.tryParse('${st['download'] ?? 0}') ??
+              snapshot.downloadBytes,
+          uploadBytes:
+              int.tryParse('${st['upload'] ?? 0}') ?? snapshot.uploadBytes,
+          endpoint: st['endpoint']?.toString() ?? snapshot.endpoint,
+        ));
+      } catch (_) {}
+    });
+  }
+
+  void _onEvent(Map<String, dynamic> event) {
+    final type = event['type']?.toString();
+    if (type == 'log') {
+      _log('${event['line']}');
+      return;
+    }
+    if (type == 'status') {
+      final phase = EnginePhase.values.firstWhere(
+        (e) => e.name == event['phase'],
+        orElse: () => snapshot.phase,
+      );
+      _set(snapshot.copyWith(
+        phase: phase,
+        message: event['message']?.toString() ?? snapshot.message,
+        endpoint: event['endpoint']?.toString() ?? snapshot.endpoint,
+        protocol: event['protocol']?.toString() ?? snapshot.protocol,
+        downloadBytes: int.tryParse('${event['download'] ?? ''}') ??
+            snapshot.downloadBytes,
+        uploadBytes:
+            int.tryParse('${event['upload'] ?? ''}') ?? snapshot.uploadBytes,
+      ));
+    }
+  }
+
+  void log(String line) => _log(line);
+
+  void _log(String line) {
+    logs.add(LogLine(line));
+    if (logs.length > 800) logs.removeRange(0, logs.length - 800);
+    notifyListeners();
+  }
+
+  void _set(EngineSnapshot next) {
+    snapshot = next;
+    notifyListeners();
+  }
+
+  void clearLogs() {
+    logs.clear();
+    notifyListeners();
+  }
+
+  Future<void> recover() async {
+    await engine.recoverNetwork();
+    _log('network recovery requested');
+  }
+
+  @override
+  void dispose() {
+    _events?.cancel();
+    _winLogs?.cancel();
+    _updateTimer?.cancel();
+    _statsTimer?.cancel();
+    super.dispose();
+  }
+}
+
+extension on VpnSettings {
+  VpnSettings copyWithProtocol(Protocol protocol) {
+    final json = toJson();
+    json['protocol'] = protocol.name;
+    return VpnSettings.fromJson(json);
+  }
+}
