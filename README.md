@@ -19,7 +19,7 @@ Nimbus is **not** affiliated with CluvexStudio. Aether is a separate project wit
 | UI | Flutter | Flutter (compact 420×780 window) |
 | Core | Aether **v2.0.0** `libaether.so` | Aether **v2.0.0** `aether.exe` |
 | Device VPN | `VpnService` + [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) 2.17.1 | WinTUN + tun2socks (Administrator) |
-| Proxy | SOCKS5 `127.0.0.1:1819` (configurable) | SOCKS5 `127.0.0.1:1819` (configurable) |
+| Proxy | SOCKS5 `127.0.0.1:1819` (configurable) | SOCKS5 `127.0.0.1:1819` (configurable) + system proxy auto on/off |
 | Extras | QS tile, home widget, bypass LAN, MTU/keepalive/watchdog | Bypass LAN routes, keepalive, MTU, watchdog |
 | Minimum OS | **Android 7.0** (API 24) | **Windows 8.1** (6.3) through 11, x64 |
 | Updates | GitHub Releases API | GitHub Releases API |
@@ -69,6 +69,22 @@ Android 7–latest is `minSdk 24`. Windows 8.1 support is requested in the insta
 
 Smart Connect tries MASQUE H3 → MASQUE H2 → WireGuard → gool → MASQUE×2 (`--mim`). Scan modes: turbo, balanced, thorough, stealth, ironclad. Obfuscation defaults to `firewall` (MASQUE) and `balanced` (WireGuard/gool).
 
+### Windows system proxy
+
+On Windows, Nimbus manages the **system proxy** so connect/disconnect fully
+controls the proxy flow — no manual steps, no leftovers:
+
+- **SOCKS5 proxy mode** (and the fallback when a non-elevated device VPN can
+  only provide SOCKS) → the system proxy is pointed at `127.0.0.1:<port>`
+  automatically.
+- **Device VPN** (elevated, TUN adapter active) → the system proxy is turned
+  **off** automatically; every app rides the TUN adapter directly, with
+  nothing to configure.
+- **Disconnect** → the exact pre-Nimbus proxy settings (your own proxy, or
+  plain "off") are restored and announced to running apps. If the app was
+  hard-closed mid-session instead, the next launch removes any leftover proxy
+  pointing at Nimbus' listener.
+
 ---
 
 ## فارسی
@@ -78,6 +94,7 @@ Smart Connect tries MASQUE H3 → MASQUE H2 → WireGuard → gool → MASQUE×2
 - **اندروید ۷ به بالا** و **ویندوز ۸.۱ تا ۱۱**
 - هسته Aether ۲.۰.۰
 - VPN سراسری یا پروکسی SOCKS5 روی `127.0.0.1:1819`
+- در ویندوز، پروکسی سیستمی را خود برنامه مدیریت می‌کند: در حالت پروکسی، خودکار به `127.0.0.1:<پورت>` وصل می‌شود؛ در حالت VPN دستگاه، پروکسی سیستمی خاموش می‌شود و همه برنامه‌ها مستقیم از TUN می‌روند؛ هنگام قطع اتصال، تنظیمات قبلی پروکسی برمی‌گردد
 - اتصال هوشمند، MASQUE، WireGuard، gool، MASQUE×2
 - اطلاع‌رسانی به‌روزرسانی از GitHub Releases همین مخزن
 
