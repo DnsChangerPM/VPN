@@ -115,6 +115,24 @@ class S {
   String get needAdmin => isFa
       ? 'برای VPN سراسری ویندوز، برنامه را به‌صورت Administrator اجرا کنید'
       : 'System-wide Windows VPN needs Administrator rights';
+  String get deviceVpnHint => isFa
+      ? 'برای VPN دستگاه (عبور همه برنامه‌ها از تونل)، برنامه باید Administrator باشد'
+      : 'A device VPN (every app through the tunnel) needs Nimbus to run as Administrator';
+  String get restartAsAdmin => isFa
+      ? 'اجرا به‌صورت Administrator'
+      : 'Run as Administrator';
+  String get elevationRefused => isFa
+      ? 'ارتقای دسترسی انجام نشد — پنجره UAC رد شد یا در دسترس نیست'
+      : 'Elevation did not happen — the UAC prompt was declined or unavailable';
+  String get windowsVersion => isFa ? 'ویندوز' : 'Windows';
+  String get elevated => isFa ? 'دسترسی Administrator' : 'Administrator';
+  String get tunBackend => isFa ? 'پل TUN' : 'TUN bridge';
+  String get tunAdapter => isFa ? 'آداپتور WinTUN' : 'WinTUN adapter';
+  String get tunBlocked => isFa
+      ? 'چرا VPN دستگاه بالا نیامد'
+      : 'Why the device VPN is down';
+  String get yes => isFa ? 'بله' : 'Yes';
+  String get no => isFa ? 'خیر' : 'No';
   String get selectApps => isFa ? 'انتخاب برنامه‌ها' : 'Select applications';
   String get searchApps => isFa ? 'جست‌وجوی برنامه‌ها' : 'Search applications';
   String get selected => isFa ? 'انتخاب‌شده' : 'selected';

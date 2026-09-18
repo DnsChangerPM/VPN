@@ -49,6 +49,62 @@ class SocksProbe {
     throw SocketException('tunnel data-plane proof failed: $lastError');
   }
 
+  /// Proves the **device** VPN (not the SOCKS listener) carries traffic: a
+  /// plain HTTP GET with no proxy at all. Once the TUN adapter holds the
+  /// default route, the OS has nothing else to send it through, so a successful
+  /// reply is proof the adapter, the bridge and the routes really work.
+  ///
+  /// The first target is an IP literal — it must succeed even when DNS inside
+  /// the tunnel is broken, so a routing failure and a DNS failure are not
+  /// confused with each other. The domain targets then check name resolution
+  /// through the tunnel.
+  static Future<int> proveDevice({
+    Duration timeout = const Duration(seconds: 12),
+    int attempts = 2,
+  }) async {
+    const targets = <List<String>>[
+      ['1.1.1.1', '/cdn-cgi/trace'],
+      ['www.cloudflare.com', '/cdn-cgi/trace'],
+      ['detectportal.firefox.com', '/success.txt'],
+    ];
+    Object? lastError;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      for (final target in targets) {
+        try {
+          return await _directGet(target[0], target[1], timeout: timeout);
+        } catch (e) {
+          lastError = e;
+        }
+      }
+    }
+    throw SocketException('device VPN data-plane proof failed: $lastError');
+  }
+
+  static Future<int> _directGet(
+    String host,
+    String path, {
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    final sw = Stopwatch()..start();
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      // Never inherit a proxy: the point is to test the adapter itself.
+      client.findProxy = (_) => 'DIRECT';
+      final request =
+          await client.getUrl(Uri.parse('http://$host$path')).timeout(timeout);
+      request.followRedirects = false;
+      final response = await request.close().timeout(timeout);
+      await response.drain<void>().timeout(timeout);
+      sw.stop();
+      if (response.statusCode < 200 || response.statusCode >= 400) {
+        throw SocketException('HTTP ${response.statusCode} via the TUN device');
+      }
+      return sw.elapsedMilliseconds;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   /// Cloudflare trace through the tunnel (ping + exit IP + colo).
   static Future<({String body, int pingMs})> cloudflareTrace({
     String host = '127.0.0.1',

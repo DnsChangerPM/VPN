@@ -10,6 +10,7 @@ import '../models/settings.dart';
 import 'aether_args.dart';
 import 'socks_probe.dart';
 import 'windows_proxy.dart';
+import 'windows_tun.dart';
 
 class PlatformEngine {
   static const _channel = MethodChannel('nimbus.vpn/engine');
@@ -136,7 +137,10 @@ class PlatformEngine {
 
 /// Windows: spawns `aether.exe` (env-only config, like the reference GUI),
 /// waits for a real SOCKS5 handshake, proves the data plane, then puts a
-/// WinTUN + tun2socks full-device tunnel in front when running elevated.
+/// WinTUN full-device tunnel in front when running elevated — trying whichever
+/// bridge (tun2socks, its Go 1.20 legacy build, or hev-socks5-tunnel) can
+/// actually run on this Windows, and proving the device carries traffic before
+/// calling it a VPN. See `windows_tun.dart` for why there is more than one.
 class WindowsEngine {
   WindowsEngine._() {
     // Proxy changes are visible in the same live log as the core's output.
@@ -156,11 +160,29 @@ class WindowsEngine {
   String? _originalGw;
   int _socksPort = 1819;
   bool _bypassLan = true;
-  bool _tunActive = false;
   final _bypass = <String>{};
   final _lanBypass = <String>[];
   final _rangeRoutes = <String>[];
   String _runDir = '';
+
+  /// WinTUN adapter name we ask for. Windows may hand back "Nimbus 2" when a
+  /// stale interface of that name is still registered, so the *real* name and
+  /// index are discovered after the bridge starts and used from then on.
+  static const String adapterBase = 'Nimbus';
+  static const String tunIp = '198.18.0.1';
+  static const String tunMask = '255.255.255.252';
+
+  // Diagnostics: what the device VPN is actually running on, and — when it is
+  // not — exactly why. Shown on the Diagnostics page.
+  String tunBackend = '';
+  String tunAdapter = '';
+  int tunIndex = -1;
+  String tunError = '';
+  bool? _elevated;
+  WindowsBuild _winBuild = WindowsBuild.unknown;
+  final _tunTail = <String>[];
+  int? _tunExit;
+  List<String>? _defaultRouteDelete;
 
   Stream<String> get logs => _logs.stream;
 
@@ -171,13 +193,64 @@ class WindowsEngine {
         'protocol': protocol,
       };
 
+  /// Elevation cannot change for the lifetime of a process, so the (cheap but
+  /// still process-spawning) check runs once.
+  ///
+  /// It reads the integrity level from `whoami /groups` instead of `net
+  /// session`: `net session` fails on any PC where the LanmanServer service is
+  /// stopped or disabled, which used to make Nimbus tell a real Administrator
+  /// to "restart as Administrator" forever.
   Future<bool> isAdmin() async {
+    final cached = _elevated;
+    if (cached != null) return cached;
+    final elevated = await Elevation.check();
+    _elevated = elevated;
+    return elevated;
+  }
+
+  /// Windows version, detected once (registry, `cmd /c ver` as fallback).
+  Future<WindowsBuild> windowsBuild() async {
+    if (!_winBuild.isKnown) _winBuild = await WindowsBuild.detect();
+    return _winBuild;
+  }
+
+  /// Diagnostics snapshot for the UI.
+  Map<String, String> tunInfo() => {
+        'elevated': '${_elevated ?? false}',
+        'windows': _winBuild.label,
+        'backend': tunBackend.isEmpty ? '—' : tunBackend,
+        'adapter': tunAdapter.isEmpty ? '—' : '$tunAdapter (#$tunIndex)',
+        'error': tunError.isEmpty ? '—' : tunError,
+      };
+
+  /// Relaunches Nimbus through the UAC prompt and closes this instance, so
+  /// "run as Administrator for full VPN" is one tap instead of: find the exe,
+  /// close the app, right-click, run as administrator, connect again.
+  Future<bool> restartElevated() async {
+    final exe = Platform.resolvedExecutable;
+    final script = "Start-Process -FilePath '${exe.replaceAll("'", "''")}' -Verb RunAs";
     try {
-      final r = await Process.run('net', ['session'], runInShell: true);
-      return r.exitCode == 0;
-    } catch (_) {
+      final r = await Process.run('powershell', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        script,
+      ]);
+      if (r.exitCode != 0) {
+        _logLine('elevation refused or failed: ${r.stderr}'.trim());
+        return false;
+      }
+    } catch (e) {
+      _logLine('elevation refused or failed: $e');
       return false;
     }
+    // The elevated instance is coming up: leave the network exactly as we
+    // found it and get out of its way (it needs the SOCKS port).
+    await stop();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    exit(0);
   }
 
   /// Per-user writable working directory for the core. The identity files
@@ -218,7 +291,6 @@ class WindowsEngine {
 
     _socksPort = settings.socksPort;
     _bypassLan = settings.bypassLan;
-    _tunActive = false;
     _bypass.clear();
     _lanBypass.clear();
     _rangeRoutes.clear();
@@ -298,13 +370,15 @@ class WindowsEngine {
     }
 
     final admin = await isAdmin();
+    final win = await windowsBuild();
     if (!admin) {
       // Honest degradation: no TUN without elevation, so the system proxy
       // is what keeps the machine tunneled. Tell the user exactly what to
       // do instead of silently lying about a TUN.
       await proxy.enableOurs(_socksPort);
+      tunError = 'not running as Administrator — WinTUN needs elevation';
       phase = EnginePhase.connected;
-      message = 'SOCKS5 127.0.0.1:$_socksPort (system proxy) — restart as Administrator for full VPN';
+      message = 'SOCKS5 127.0.0.1:$_socksPort (system proxy) — tap "Run as Administrator" for full device VPN';
       _emit();
       return;
     }
@@ -313,7 +387,7 @@ class WindowsEngine {
       await proxy.enableOurs(_socksPort);
       phase = EnginePhase.connected;
       message = lastError.isEmpty
-          ? 'SOCKS5 127.0.0.1:$_socksPort (TUN failed, system proxy on)'
+          ? 'SOCKS5 127.0.0.1:$_socksPort (device VPN unavailable, system proxy on)'
           : '$lastError — system proxy on';
       _emit();
       return;
@@ -322,8 +396,30 @@ class WindowsEngine {
     // system proxy goes back to off — no proxy to set, everything through
     // the VPN device.
     await proxy.clearOurs();
+
+    // An adapter that exists and a default route that is installed are not the
+    // same thing as internet that works. Prove the *device* carries traffic
+    // (plain HTTP, no SOCKS — the OS has nothing left but the TUN) before
+    // claiming a full VPN; otherwise a bridge that died right after creating
+    // the adapter would leave the machine blackholed and the UI green.
+    try {
+      await SocksProbe.proveDevice();
+    } catch (e) {
+      _logLine('device VPN data-plane proof failed: $e');
+      await _removeRoutes();
+      await _killTun();
+      await _awaitAdapterGone();
+      tunBackend = '';
+      tunError = 'adapter came up but carried no traffic: $e';
+      await proxy.enableOurs(_socksPort);
+      phase = EnginePhase.connected;
+      message = 'device VPN carried no traffic on ${win.label} — SOCKS5 system proxy on';
+      _emit();
+      return;
+    }
+
     phase = EnginePhase.connected;
-    message = 'System VPN active';
+    message = 'System VPN active — $tunBackend';
     _emit();
   }
 
@@ -336,44 +432,89 @@ class WindowsEngine {
       _emit();
     }
     final aether = _aether;
-    final tun = _tun;
     _aether = null;
-    _tun = null;
-    void kill(Process? proc) {
-      if (proc == null) return;
-      try {
-        proc.kill(ProcessSignal.sigterm);
-      } catch (_) {}
-    }
 
-    kill(tun);
-    kill(aether);
-    await Future<void>.delayed(const Duration(milliseconds: 400));
+    // Routes go first: while the default route still points at the TUN,
+    // killing the bridge would leave the machine with no way out at all.
+    await _removeRoutes(forgetUpstreams: true);
+    await _killTun();
     try {
-      tun?.kill(ProcessSignal.sigkill);
+      aether?.kill(ProcessSignal.sigterm);
     } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 400));
     try {
       aether?.kill(ProcessSignal.sigkill);
     } catch (_) {}
-    await _restoreRoutes();
+    await _awaitAdapterGone();
     // Disconnect means proxy flow stops too: hand the system proxy back to
     // whatever it was before Nimbus, so the machine is left direct (or with
     // the user's own proxy) instead of pointing at a dead listener.
     await WindowsSystemProxy.instance.restore(ourPort: _socksPort);
+    tunBackend = '';
+    tunAdapter = '';
+    tunIndex = -1;
     phase = EnginePhase.disconnected;
     message = '';
     endpoint = '';
     _emit();
   }
 
+  /// Terminates the TUN bridge. The WinTUN adapter is owned by the process, so
+  /// closing it removes the adapter — no `netsh ... admin=disable` needed (that
+  /// is what left a stale "Nimbus" interface behind and made the next session
+  /// land on "Nimbus 2").
+  Future<void> _killTun() async {
+    final tun = _tun;
+    _tun = null;
+    _tunExit = null;
+    if (tun == null) return;
+    try {
+      tun.kill(ProcessSignal.sigterm);
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    try {
+      tun.kill(ProcessSignal.sigkill);
+    } catch (_) {}
+    try {
+      await tun.exitCode.timeout(const Duration(seconds: 3));
+    } catch (_) {}
+  }
+
+  /// Confirms the adapter is really gone, so the next connect can reuse the
+  /// name "Nimbus" instead of being handed "Nimbus 2" by Windows.
+  Future<void> _awaitAdapterGone() async {
+    final name = tunAdapter.isEmpty ? adapterBase : tunAdapter;
+    tunAdapter = '';
+    tunIndex = -1;
+    for (var i = 0; i < 8; i++) {
+      final rows = await _interfaces();
+      if (Netsh.findAdapter(rows, name) == null) return;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    _logLine('WinTUN adapter "$name" is still registered after the bridge exited');
+  }
+
+  Future<List<NetInterface>> _interfaces() async {
+    try {
+      final r = await Process.run(
+          'netsh', ['interface', 'ipv4', 'show', 'interfaces']);
+      return Netsh.parseInterfaces('${r.stdout}');
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<void> recover() async {
     await stop();
-    await Process.run('ipconfig', ['/flushdns'], runInShell: true);
-    await Process.run(
-      'netsh',
-      ['interface', 'set', 'interface', 'Nimbus', 'admin=disable'],
-      runInShell: true,
-    );
+    await Process.run('ipconfig', ['/flushdns']);
+    // A run that was hard-killed can leave the adapter registered. Only then
+    // do we take it down — by index, because the name may be "Nimbus 2".
+    final stale = Netsh.findAdapter(await _interfaces(), adapterBase);
+    if (stale != null) {
+      _logLine('removing leftover adapter ${stale.name} (#${stale.index})');
+      await Process.run('netsh',
+          ['interface', 'set', 'interface', '${stale.index}', 'admin=disable']);
+    }
   }
 
   bool _aetherExited = false;
@@ -438,98 +579,364 @@ class WindowsEngine {
   }
 
   Future<void> _captureGateway() async {
-    final r = await Process.run('route', ['print', '0.0.0.0'], runInShell: true);
-    final text = '${r.stdout}';
-    final re = RegExp(
-        r'0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)');
-    final m = re.firstMatch(text);
-    if (m != null) {
-      _originalGw = m.group(1);
+    final r = await Process.run('route', ['print', '0.0.0.0']);
+    // Never capture our own tunnel address: after a crash the default route can
+    // still point at 198.18.0.1, and "bypass the upstream through that" is a
+    // routing loop with no way out.
+    final gw = Netsh.parseGateway('${r.stdout}', ignore: tunIp);
+    if (gw != null) _originalGw = gw;
+  }
+
+  /// Brings up the WinTUN device: pick a bridge that can actually run on this
+  /// Windows, wait for the adapter, then configure address, DNS and routes.
+  ///
+  /// The old version hard-coded one bridge (`tun2socks.exe`) and one failure
+  /// sentence ("WinTUN adapter never appeared"). That message hid the two
+  /// reasons it really happens: the bridge process died on the spot (a Go
+  /// build that needs Windows 10+, or a GOAMD64=v3 build that needs an AVX2
+  /// CPU), or Windows registered the adapter under a different name. Both are
+  /// now detected, reported and — where possible — retried with another bridge.
+  Future<bool> _startTun(String dir, VpnSettings settings) async {
+    final win = await windowsBuild();
+    await _captureGateway();
+    tunBackend = '';
+    tunAdapter = '';
+    tunIndex = -1;
+    tunError = '';
+
+    // The installed layout keeps every bridge next to `nimbus.exe`; a
+    // development run keeps them in `third_party/windows`.
+    final dirs = <String>[
+      dir,
+      p.join(Directory.current.path, 'third_party', 'windows'),
+    ];
+    File? find(String name) {
+      for (final d in dirs) {
+        final f = File(p.join(d, name));
+        if (f.existsSync()) return f;
+      }
+      return null;
+    }
+
+    final wintun = find('wintun.dll');
+    final bridges = <TunBackend, File>{
+      for (final b in TunBackend.values)
+        if (find(b.fileName) != null) b: find(b.fileName)!,
+    };
+    final missing = <String>[
+      if (wintun == null) 'wintun.dll',
+      ...TunBackend.values
+          .where((b) => !bridges.containsKey(b))
+          .map((b) => b.fileName),
+    ];
+    if (wintun == null || bridges.isEmpty) {
+      lastError = 'device VPN files missing (${missing.join(', ')}) — '
+          'reinstall Nimbus; running SOCKS5 only';
+      tunError = lastError;
+      _logLine(lastError);
+      return false;
+    }
+    if (missing.isNotEmpty) {
+      _logLine('device VPN: not installed → ${missing.join(', ')}');
+    }
+
+    final failures = <TunFailure>[];
+    for (final backend in TunPlan.order(build: win, available: bridges.keys)) {
+      _logLine('device VPN: trying ${backend.label} on ${win.label}');
+      final attempt =
+          await _tryTun(backend, bridges[backend]!, wintun, settings);
+      if (attempt.ok) {
+        tunBackend = backend.label;
+        _logLine(
+            'device VPN: ${backend.label} up on "${tunAdapter}" (#$tunIndex)');
+        return true;
+      }
+      failures.add(TunFailure(backend, attempt.reason));
+      _logLine('device VPN: ${backend.label} failed — ${attempt.reason}');
+      await _removeRoutes();
+      await _killTun();
+      await _awaitAdapterGone();
+      // A netsh/route refusal is not this bridge's fault: no other bridge will
+      // get past it either, so stop instead of burning another 20 s.
+      if (attempt.fatal) break;
+    }
+
+    final why = failures.map((f) => '$f').join(' | ');
+    lastError = 'device VPN unavailable (${win.label}) — $why';
+    tunError = lastError;
+    return false;
+  }
+
+  Future<_TunAttempt> _tryTun(
+    TunBackend backend,
+    File exe,
+    File wintun,
+    VpnSettings settings,
+  ) async {
+    _tunTail.clear();
+    _tunExit = null;
+
+    // Every bridge loads wintun.dll from its own directory, and the MSYS build
+    // of hev also needs msys-2.0.dll there. Fail fast with a reason the user
+    // can act on instead of waiting 20 s for an adapter that cannot appear.
+    final here = exe.parent.path;
+    final localWintun = File(p.join(here, 'wintun.dll'));
+    if (!localWintun.existsSync()) {
+      try {
+        wintun.copySync(localWintun.path);
+      } catch (e) {
+        return _TunAttempt.fail('wintun.dll is not next to ${exe.path}: $e');
+      }
+    }
+    if (backend == TunBackend.hev &&
+        !File(p.join(here, 'msys-2.0.dll')).existsSync()) {
+      return _TunAttempt.fail(
+          'msys-2.0.dll is missing next to ${exe.path} (MSYS runtime)');
+    }
+
+    final List<String> args;
+    if (backend == TunBackend.hev) {
+      // hev is configured by a YAML file. It creates the WinTUN adapter named
+      // below and sets the MTU; address, DNS and routes stay ours so that both
+      // bridges are configured identically.
+      final cfg = File(p.join(runtimeDir, 'hev.yml'));
+      try {
+        await cfg.writeAsString(HevConfig.yaml(
+          adapterName: adapterBase,
+          mtu: settings.effectiveMtu,
+          socksPort: _socksPort,
+          ipv6: settings.ipv6Tunnel,
+          logLevel: settings.logLevel,
+        ));
+      } catch (e) {
+        return _TunAttempt.fail('cannot write ${cfg.path}: $e');
+      }
+      args = [cfg.path];
+    } else {
+      args = [
+        '-device',
+        'tun://$adapterBase',
+        '-proxy',
+        'socks5://127.0.0.1:$_socksPort',
+        '-loglevel',
+        'info',
+      ];
+    }
+
+    try {
+      _tun = await Process.start(exe.path, args, workingDirectory: here);
+    } catch (e) {
+      return _TunAttempt.fail('cannot start ${exe.path}: $e');
+    }
+    final proc = _tun!;
+    proc.stdout.transform(utf8.decoder).listen(_onTunLog);
+    proc.stderr.transform(utf8.decoder).listen(_onTunLog);
+    unawaited(proc.exitCode.then((code) {
+      // Only this attempt's process may report an exit code: a bridge that is
+      // still shutting down from the previous attempt would otherwise make the
+      // next one look like it died on the spot.
+      if (identical(_tun, proc)) _tunExit = code;
+      _onTunLog('${backend.fileName} exited ($code)');
+    }));
+
+    // Wait for the WinTUN adapter to materialise; do not assume 2 seconds, and
+    // stop waiting the moment the bridge dies so the real reason survives.
+    NetInterface? adapter;
+    for (var i = 0; i < 40; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      adapter = Netsh.findAdapter(await _interfaces(), adapterBase);
+      if (adapter != null) break;
+      final exit = _tunExit;
+      if (exit != null) return _TunAttempt.fail(_exitReason(exit));
+    }
+    if (adapter == null) {
+      final exit = _tunExit;
+      if (exit != null) return _TunAttempt.fail(_exitReason(exit));
+      final tail = _tunTail.isEmpty ? 'no output' : _tunTail.last;
+      return _TunAttempt.fail(
+          'WinTUN adapter "$adapterBase" never appeared within 20 s (bridge still running, last: $tail)');
+    }
+    tunAdapter = adapter.name;
+    tunIndex = adapter.index;
+
+    final cfg = await _configureAdapter(settings);
+    if (cfg != null) return cfg;
+
+    // Upstreams must be bypassed *before* the default route goes in.
+    await _bypassUpstreams(settings);
+    final route = await _installDefaultRoute();
+    if (route != null) {
+      return _TunAttempt.fail('default route install failed: $route',
+          fatal: true);
+    }
+    await _bypassLanRoutes();
+    return _TunAttempt.success();
+  }
+
+  /// Address, MTU and DNS on the adapter. Returns null on success, or the
+  /// failure to report. Retried briefly: the adapter is listed by netsh a
+  /// moment before it accepts configuration.
+  Future<_TunAttempt?> _configureAdapter(VpnSettings settings) async {
+    ProcessResult? addr;
+    for (var i = 0; i < 4; i++) {
+      addr = await _netsh([
+        'interface', 'ipv4', 'set', 'address',
+        'name=@if@',
+        'source=static',
+        'addr=$tunIp',
+        'mask=$tunMask',
+      ]);
+      if (addr.exitCode == 0) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (addr == null || addr.exitCode != 0) {
+      return _TunAttempt.fail(
+          'netsh set address on "$tunAdapter" failed: ${_out(addr)}',
+          fatal: true);
+    }
+
+    // Best effort: a wrong MTU costs performance, not connectivity.
+    final mtu = await _netsh([
+      'interface', 'ipv4', 'set', 'subinterface',
+      '@if@',
+      'mtu=${settings.effectiveMtu}',
+      'store=persistent',
+    ]);
+    if (mtu.exitCode != 0) _logLine('netsh set mtu: ${_out(mtu)}');
+
+    final dns = await _netsh(
+        ['interface', 'ipv4', 'set', 'dns', 'name=@if@', 'static', '1.1.1.1']);
+    if (dns.exitCode != 0) _logLine('netsh set dns: ${_out(dns)}');
+    final dns2 = await _netsh([
+      'interface', 'ipv4', 'add', 'dns',
+      'name=@if@',
+      '1.0.0.1',
+      'index=2',
+    ]);
+    if (dns2.exitCode != 0) _logLine('netsh add dns: ${_out(dns2)}');
+    return null;
+  }
+
+  /// Sends a netsh sub-command to the tunnel adapter, trying the interface
+  /// index first (digits survive Windows command-line quoting) and the real
+  /// adapter name second ("Nimbus 2" contains a space).
+  Future<ProcessResult> _netsh(List<String> argv) async {
+    ProcessResult? last;
+    for (final target in ['$tunIndex', tunAdapter]) {
+      if (target.isEmpty || target == '-1') continue;
+      last = await Process.run(
+          'netsh', argv.map((a) => a.replaceAll('@if@', target)).toList());
+      if (last.exitCode == 0) return last;
+    }
+    return last ?? ProcessResult(0, 1, '', 'netsh was not run');
+  }
+
+  static String _out(ProcessResult? r) =>
+      r == null ? 'no result' : '${r.stdout}${r.stderr}'.trim();
+
+  /// Installs the default route through the tunnel.
+  ///
+  /// The accepted form differs per bridge and per Windows: with a /30 on the
+  /// adapter the tunnel IP is a valid on-link next hop, while an on-link route
+  /// pinned to the interface index (`if <idx>`, gateway 0.0.0.0) is what the
+  /// hev bridge documents. Try them in order and remember the winner so
+  /// disconnect can remove exactly that route — `route delete 0.0.0.0` without
+  /// a next hop would delete the machine's own default route too.
+  Future<String?> _installDefaultRoute() async {
+    final attempts = <String>[];
+    final candidates = <_RouteForm>[
+      _RouteForm(
+        ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5', 'if', '$tunIndex'],
+        ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'if', '$tunIndex'],
+      ),
+      _RouteForm(
+        ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5'],
+        ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp],
+      ),
+      _RouteForm(
+        ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', '0.0.0.0', 'metric', '5', 'if', '$tunIndex'],
+        ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', '0.0.0.0', 'if', '$tunIndex'],
+      ),
+      _RouteForm(
+        ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex', 'nexthop=$tunIp', 'metric=5'],
+        ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex'],
+      ),
+      _RouteForm(
+        ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex'],
+        ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex'],
+      ),
+    ];
+
+    for (final form in candidates) {
+      if (form.add.contains('-1')) continue; // no interface index known
+      final r = await Process.run(form.add.first, form.add.sublist(1));
+      if (r.exitCode == 0) {
+        _logLine('default route: ${form.add.join(' ')}');
+        // Trust but verify: some Windows builds accept the command and still
+        // do not publish the route. Undo it before trying the next form so we
+        // never end up with two default routes through the tunnel.
+        final check = await Process.run('route', ['print', '0.0.0.0']);
+        if (Netsh.hasDefaultRoute('${check.stdout}', tunIp)) {
+          _defaultRouteDelete = form.delete;
+          return null;
+        }
+        await Process.run(form.delete.first, form.delete.sublist(1));
+        attempts.add('${form.add.join(' ')} → accepted but not in the table');
+        continue;
+      }
+      attempts.add('${form.add.join(' ')} → ${_out(r)}');
+    }
+    return attempts.isEmpty ? 'no route command was tried' : attempts.join(' || ');
+  }
+
+  Future<void> _bypassLanRoutes() async {
+    final gw = _originalGw;
+    if (!_bypassLan || gw == null) return;
+    const lan = [
+      ['10.0.0.0', '255.0.0.0'],
+      ['172.16.0.0', '255.240.0.0'],
+      ['192.168.0.0', '255.255.0.0'],
+    ];
+    for (final row in lan) {
+      await Process.run('route', ['add', row[0], 'mask', row[1], gw]);
+      _lanBypass.add(row[0]);
     }
   }
 
-  Future<bool> _startTun(String dir, VpnSettings settings) async {
-    await _captureGateway();
-    final tun2socks = File(p.join(dir, 'tun2socks.exe'));
-    final wintun = File(p.join(dir, 'wintun.dll'));
-    if (!tun2socks.existsSync() || !wintun.existsSync()) {
-      lastError = 'tun2socks.exe/wintun.dll missing; running SOCKS5 only';
-      _logLine(lastError);
-      return false;
+  /// Removes everything this session added to the routing table.
+  ///
+  /// [forgetUpstreams] is only true on a real disconnect. Between two bridge
+  /// attempts the upstream addresses stay known: re-adding the default route
+  /// without the matching bypass routes would send the core's own connection
+  /// into the tunnel — a routing loop, not a VPN.
+  Future<void> _removeRoutes({bool forgetUpstreams = false}) async {
+    final del = _defaultRouteDelete;
+    _defaultRouteDelete = null;
+    if (del != null) {
+      final r = await Process.run(del.first, del.sublist(1));
+      if (r.exitCode != 0) _logLine('default route delete: ${_out(r)}');
     }
-    try {
-      _tun = await Process.start(
-        tun2socks.path,
-        [
-          '-device',
-          'tun://Nimbus',
-          '-proxy',
-          'socks5://127.0.0.1:$_socksPort',
-          '-loglevel',
-          'info',
-        ],
-        workingDirectory: dir,
-      );
-      _tun!.stdout.transform(utf8.decoder).listen(_onLog);
-      _tun!.stderr.transform(utf8.decoder).listen(_onLog);
-    } catch (e) {
-      lastError = 'tun2socks failed to start: $e';
-      return false;
+    for (final dest in _rangeRoutes) {
+      await Process.run('route', ['delete', dest]);
     }
-
-    // Wait for the WinTUN adapter to materialise, do not assume 2 seconds.
-    var adapterUp = false;
-    for (var i = 0; i < 40; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      final r = await Process.run(
-        'netsh',
-        ['interface', 'ip', 'show', 'interfaces'],
-        runInShell: true,
-      );
-      if ('${r.stdout}'.contains('Nimbus')) {
-        adapterUp = true;
-        break;
+    if (_originalGw != null) {
+      for (final ip in _bypass) {
+        await Process.run('route', ['delete', ip]);
       }
     }
-    if (!adapterUp) {
-      lastError = 'WinTUN adapter "Nimbus" never appeared';
-      _logLine(lastError);
-      return false;
+    for (final ip in _lanBypass) {
+      await Process.run('route', ['delete', ip]);
     }
+    if (forgetUpstreams) _bypass.clear();
+    _lanBypass.clear();
+    _rangeRoutes.clear();
+  }
 
-    final addr = await Process.run(
-      'netsh',
-      [
-        'interface', 'ip', 'set', 'address',
-        'name=Nimbus',
-        'source=static',
-        'addr=198.18.0.1',
-        'mask=255.255.255.252',
-      ],
-      runInShell: true,
-    );
-    if (addr.exitCode != 0) {
-      lastError = 'netsh set address failed: ${addr.stdout}${addr.stderr}';
-      _logLine(lastError);
-      return false;
-    }
-    await Process.run(
-      'netsh',
-      ['interface', 'ip', 'set', 'dns', 'name=Nimbus', 'static', '1.1.1.1'],
-      runInShell: true,
-    );
-    await Process.run(
-      'netsh',
-      [
-        'interface', 'ip', 'add', 'dns', 'name=Nimbus', '1.0.0.1', 'index=2'
-      ],
-      runInShell: true,
-    );
-
-    // Bypass the tunnel's own upstreams first — missing one is the difference
-    // between a tunnel and a routing loop. The ranges are the full WARP
-    // candidate space the core can scan (aether/src/prober.rs), collapsed
-    // into the documented /20 ingress blocks plus the DoH ranges.
+  /// Bypass the tunnel's own upstreams before the default route goes in —
+  /// missing one is the difference between a tunnel and a routing loop. The
+  /// ranges are the full WARP candidate space the core can scan
+  /// (aether/src/prober.rs), collapsed into the documented /20 ingress blocks.
+  Future<void> _bypassUpstreams(VpnSettings settings) async {
     const warpRanges = [
       ['162.159.192.0', '255.255.240.0'], // 162.159.192-207, every MASQUE CIDR
       ['188.114.96.0', '255.255.240.0'], // 188.114.96-111
@@ -541,71 +948,41 @@ class WindowsEngine {
       final ip = RegExp(r'(\d{1,3}(?:\.\d{1,3}){3})').firstMatch(custom);
       if (ip != null) _bypass.add(ip.group(1)!);
     }
-    if (_originalGw != null) {
-      for (final ip in _bypass) {
-        await Process.run(
-            'route', ['add', ip, 'mask', '255.255.255.255', _originalGw!],
-            runInShell: true);
-      }
-      _rangeRoutes.clear();
-      for (final row in warpRanges) {
-        await Process.run(
-            'route', ['add', row[0], 'mask', row[1], _originalGw!],
-            runInShell: true);
-        _rangeRoutes.add(row[0]);
-      }
+    final gw = _originalGw;
+    if (gw == null) {
+      _logLine('no upstream gateway found — WARP ranges are not bypassed');
+      return;
     }
-    final def = await Process.run(
-      'route',
-      ['add', '0.0.0.0', 'mask', '0.0.0.0', '198.18.0.1', 'metric', '5'],
-      runInShell: true,
-    );
-    if (def.exitCode != 0) {
-      lastError = 'default route install failed';
-      _logLine('route add 0.0.0.0: ${def.stdout}${def.stderr}');
-      return false;
+    for (final ip in _bypass) {
+      await Process.run(
+          'route', ['add', ip, 'mask', '255.255.255.255', gw]);
     }
-    _tunActive = true;
-    if (_bypassLan && _originalGw != null) {
-      const lan = [
-        ['10.0.0.0', '255.0.0.0'],
-        ['172.16.0.0', '255.240.0.0'],
-        ['192.168.0.0', '255.255.0.0'],
-      ];
-      for (final row in lan) {
-        await Process.run(
-            'route', ['add', row[0], 'mask', row[1], _originalGw!],
-            runInShell: true);
-        _lanBypass.add(row[0]);
-      }
+    _rangeRoutes.clear();
+    for (final row in warpRanges) {
+      await Process.run('route', ['add', row[0], 'mask', row[1], gw]);
+      _rangeRoutes.add(row[0]);
     }
-    return true;
   }
 
-  Future<void> _restoreRoutes() async {
-    if (_tunActive) {
-      await Process.run(
-          'route', ['delete', '0.0.0.0', 'mask', '0.0.0.0', '198.18.0.1'],
-          runInShell: true);
+  void _onTunLog(String chunk) {
+    for (final line in chunk.split(RegExp(r'\r?\n'))) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      _tunTail.add(t);
+      if (_tunTail.length > 6) _tunTail.removeAt(0);
+      _onLog(t);
     }
-    for (final dest in _rangeRoutes) {
-      await Process.run('route', ['delete', dest], runInShell: true);
-    }
-    if (_originalGw != null) {
-      for (final ip in _bypass) {
-        await Process.run('route', ['delete', ip], runInShell: true);
-      }
-      for (final ip in _lanBypass) {
-        await Process.run('route', ['delete', ip], runInShell: true);
-      }
-    }
-    await Process.run(
-        'netsh', ['interface', 'set', 'interface', 'Nimbus', 'admin=disable'],
-        runInShell: true);
-    _bypass.clear();
-    _lanBypass.clear();
-    _rangeRoutes.clear();
-    _tunActive = false;
+  }
+
+  /// Turns a bridge's exit status into something a person can act on.
+  String _exitReason(int code) {
+    final unsigned = ExitCodes.normalize(code);
+    final hint = ExitCodes.describe(unsigned);
+    final tail = _tunTail.where((l) => !l.contains('exited (')).toList();
+    final buf = StringBuffer('exited 0x${unsigned.toRadixString(16)}');
+    if (hint != null) buf.write(' — $hint');
+    if (tail.isNotEmpty) buf.write(' [${tail.last}]');
+    return buf.toString();
   }
 
   void _logLine(String line) => _logs.add(line);
@@ -613,4 +990,26 @@ class WindowsEngine {
   void _emit() {
     // Status is polled from WindowsEngine.instance.statusMap via controller.
   }
+}
+
+/// One command pair: how the default route was installed, and how to undo
+/// exactly that.
+class _RouteForm {
+  const _RouteForm(this.add, this.delete);
+  final List<String> add;
+  final List<String> delete;
+}
+
+/// Outcome of one TUN bridge attempt. [fatal] means the failure is not the
+/// bridge's fault (netsh/route refused), so another bridge cannot help.
+class _TunAttempt {
+  const _TunAttempt(this.ok, this.reason, {this.fatal = false});
+
+  factory _TunAttempt.success() => const _TunAttempt(true, '');
+  factory _TunAttempt.fail(String reason, {bool fatal = false}) =>
+      _TunAttempt(false, reason, fatal: fatal);
+
+  final bool ok;
+  final String reason;
+  final bool fatal;
 }
