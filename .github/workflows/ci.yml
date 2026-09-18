@@ -21,8 +21,58 @@ jobs:
           flutter-version: "3.27.4"
           channel: stable
       - run: flutter pub get
-      - run: flutter test
-      - run: flutter analyze
+      - name: Test
+        shell: bash
+        run: |
+          set -uo pipefail
+          flutter test 2>&1 | tee test.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Analyze
+        shell: bash
+        run: |
+          set -uo pipefail
+          flutter analyze 2>&1 | tee analyze.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Publish findings as check annotations
+        if: failure()
+        shell: bash
+        run: |
+          # Raw logs sit behind a signed-in browser session (and a CDN that
+          # scripts cannot always reach); check-run annotations are readable
+          # through the API, so a red build says *what* is red.
+          python3 - <<'PY'
+          import pathlib, re
+
+          def emit(level, text):
+              text = " ".join(text.split())[:400]
+              if text:
+                  print(f"::{level}::{text}")
+
+          analyze = pathlib.Path("analyze.txt")
+          if analyze.exists():
+              findings = [
+                  l for l in analyze.read_text(errors="replace").splitlines()
+                  if re.search(r" (error|warning|info) • ", l)
+              ]
+              for line in findings[:60]:
+                  emit("error", line)
+              summary = [
+                  l for l in analyze.read_text(errors="replace").splitlines()
+                  if re.match(r"^\s*(No issues|\d+ issues? found)", l)
+              ]
+              for line in summary[:2]:
+                  emit("error", line)
+
+          tests = pathlib.Path("test.txt")
+          if tests.exists():
+              body = tests.read_text(errors="replace").splitlines()
+              interesting = [
+                  l for l in body
+                  if re.search(r"(Some tests failed|failed to load|Expected:|Actual:|\[E\])", l, re.I)
+              ]
+              for line in interesting[:40]:
+                  emit("error", line)
+          PY
 
   scripts:
     runs-on: ubuntu-latest
