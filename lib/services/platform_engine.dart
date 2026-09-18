@@ -579,7 +579,7 @@ class WindowsEngine {
   }
 
   Future<void> _captureGateway() async {
-    final r = await Process.run('route', ['print', '0.0.0.0']);
+    final r = await Process.run('route', ['print']);
     // Never capture our own tunnel address: after a crash the default route can
     // still point at 198.18.0.1, and "bypass the upstream through that" is a
     // routing loop with no way out.
@@ -834,6 +834,30 @@ class WindowsEngine {
   static String _out(ProcessResult? r) =>
       r == null ? 'no result' : '${r.stdout}${r.stderr}'.trim();
 
+  /// The full routing table as `route print` prints it — the view every
+  /// route verification below relies on. The full form works on every build;
+  /// the filtered `route print 0.0.0.0` variant is one moving part we do not
+  /// need.
+  Future<String> _routeTable() async {
+    try {
+      final r = await Process.run('route', ['print']);
+      return '${r.stdout}';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// One-line summary of whatever default routes the table currently holds —
+  /// what gets appended to a failed install so the next "not in the table"
+  /// is diagnosable from the log instead of invisible.
+  String _defaultRouteSnapshot(String table) {
+    final defaults = Netsh.parseRouteLines(table)
+        .where((l) => l.destination == '0.0.0.0' && l.mask == '0.0.0.0')
+        .map((l) => '${l.gateway}→${l.interfaceAddress} (m${l.metric})')
+        .toList();
+    return defaults.isEmpty ? 'no default route at all' : defaults.join(', ');
+  }
+
   /// Installs the default route through the tunnel.
   ///
   /// The accepted form differs per bridge and per Windows: with a /30 on the
@@ -842,6 +866,13 @@ class WindowsEngine {
   /// hev bridge documents. Try them in order and remember the winner so
   /// disconnect can remove exactly that route — `route delete 0.0.0.0` without
   /// a next hop would delete the machine's own default route too.
+  ///
+  /// The verification must not assume the route is printed the way it was
+  /// requested: Windows normalizes a gateway that is the adapter's *own*
+  /// address into an on-link route, whose Gateway column is a localized word
+  /// ("On-link") instead of an IP. A check that only matches IPs reports a
+  /// successfully installed route as "not in the table" — which is exactly
+  /// how a working Windows 8.1 tunnel turned into "device VPN unavailable".
   Future<String?> _installDefaultRoute() async {
     final attempts = <String>[];
     final candidates = <_RouteForm>[
@@ -849,13 +880,13 @@ class WindowsEngine {
         ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5', 'if', '$tunIndex'],
         ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'if', '$tunIndex'],
       ),
-      const _RouteForm(
-        ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5'],
-        ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp],
-      ),
       _RouteForm(
         ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', '0.0.0.0', 'metric', '5', 'if', '$tunIndex'],
         ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', '0.0.0.0', 'if', '$tunIndex'],
+      ),
+      const _RouteForm(
+        ['route', 'add', '0.0.0.0', 'mask', '0.0.0.0', tunIp, 'metric', '5'],
+        ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp],
       ),
       _RouteForm(
         ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex', 'nexthop=$tunIp', 'metric=5'],
@@ -865,6 +896,19 @@ class WindowsEngine {
         ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex'],
         ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex'],
       ),
+      // Some netsh builds resolve the interface by name where the index
+      // comes up short (and a name still resolves when the adapter was
+      // handed out as "Nimbus 2" — its index is exactly what we have).
+      if (tunAdapter.isNotEmpty) ...[
+        _RouteForm(
+          ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunAdapter', 'nexthop=$tunIp', 'metric=5'],
+          ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunAdapter'],
+        ),
+        _RouteForm(
+          ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunAdapter'],
+          ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunAdapter'],
+        ),
+      ],
     ];
 
     for (final form in candidates) {
@@ -872,21 +916,29 @@ class WindowsEngine {
       final r = await Process.run(form.add.first, form.add.sublist(1));
       if (r.exitCode == 0) {
         _logLine('default route: ${form.add.join(' ')}');
-        // Trust but verify: some Windows builds accept the command and still
-        // do not publish the route. Undo it before trying the next form so we
-        // never end up with two default routes through the tunnel.
-        final check = await Process.run('route', ['print', '0.0.0.0']);
-        if (Netsh.hasDefaultRoute('${check.stdout}', tunIp)) {
+        // Trust but verify — against the full table, the way a human would:
+        // some Windows builds publish the route under an on-link spelling
+        // (Gateway column shows a localized word, not an IP) and the
+        // verification used to be blind to that.
+        final check = await _routeTable();
+        if (Netsh.hasDefaultRoute(check, tunIp)) {
           _defaultRouteDelete = form.delete;
           return null;
         }
+        // The command was accepted yet nothing is in the table: undo it
+        // before trying the next form so we never end up with two default
+        // routes through the tunnel.
         await Process.run(form.delete.first, form.delete.sublist(1));
         attempts.add('${form.add.join(' ')} → accepted but not in the table');
         continue;
       }
       attempts.add('${form.add.join(' ')} → ${_out(r)}');
     }
-    return attempts.isEmpty ? 'no route command was tried' : attempts.join(' || ');
+    final snapshot =
+        _defaultRouteSnapshot(await _routeTable());
+    return attempts.isEmpty
+        ? 'no route command was tried'
+        : '${attempts.join(' || ')} [table: $snapshot]';
   }
 
   Future<void> _bypassLanRoutes() async {
@@ -903,6 +955,56 @@ class WindowsEngine {
     }
   }
 
+  /// Deletes the default route through the tunnel and *proves it is gone*.
+  ///
+  /// The form-specific delete can miss how Windows actually stored the route:
+  /// a route requested with the tunnel address as gateway is stored (and
+  /// printed) as an on-link route, whose Gateway column shows the localized
+  /// "On-link" word — `route delete 0.0.0.0 mask 0.0.0.0 198.18.0.1` does not
+  /// match it, just as a delete that names 0.0.0.0 does not match a stored
+  /// gateway. Left behind, such a route points the machine's only default at
+  /// a dead tunnel, so every spelling is tried until the table is clean.
+  /// None of them can touch the user's real default route: they all name
+  /// either our tunnel address or our adapter.
+  Future<void> _removeTunDefaultRoute() async {
+    final del = _defaultRouteDelete;
+    _defaultRouteDelete = null;
+    if (del != null) {
+      final r = await Process.run(del.first, del.sublist(1));
+      if (r.exitCode != 0) _logLine('default route delete: ${_out(r)}');
+    }
+    // A crashed run may leave a route behind with no remembered delete, and
+    // the index is only known once the adapter is still around to ask for.
+    if (tunIndex < 0) {
+      final adapter = Netsh.findAdapter(await _interfaces(), adapterBase);
+      if (adapter != null) tunIndex = adapter.index;
+    }
+    for (var pass = 0; pass < 3; pass++) {
+      if (!Netsh.hasDefaultRoute(await _routeTable(), tunIp)) return;
+      final trys = <List<String>>[
+        if (tunIndex >= 0)
+          ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', '0.0.0.0', 'if', '$tunIndex'],
+        ['route', 'delete', '0.0.0.0', 'mask', '0.0.0.0', tunIp],
+        if (tunIndex >= 0)
+          ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunIndex'],
+        if (tunAdapter.isNotEmpty)
+          ['netsh', 'interface', 'ipv4', 'delete', 'route', 'prefix=0.0.0.0/0', 'interface=$tunAdapter'],
+      ];
+      var removed = false;
+      for (final t in trys) {
+        final r = await Process.run(t.first, t.sublist(1));
+        if (r.exitCode == 0) removed = true;
+      }
+      if (!removed) {
+        _logLine('default route through the tunnel survives deletion — '
+            'the adapter teardown will drop it');
+        return;
+      }
+    }
+    _logLine('default route through the tunnel still in the table after '
+        'cleanup — the adapter teardown will drop it');
+  }
+
   /// Removes everything this session added to the routing table.
   ///
   /// [forgetUpstreams] is only true on a real disconnect. Between two bridge
@@ -910,12 +1012,7 @@ class WindowsEngine {
   /// without the matching bypass routes would send the core's own connection
   /// into the tunnel — a routing loop, not a VPN.
   Future<void> _removeRoutes({bool forgetUpstreams = false}) async {
-    final del = _defaultRouteDelete;
-    _defaultRouteDelete = null;
-    if (del != null) {
-      final r = await Process.run(del.first, del.sublist(1));
-      if (r.exitCode != 0) _logLine('default route delete: ${_out(r)}');
-    }
+    await _removeTunDefaultRoute();
     for (final dest in _rangeRoutes) {
       await Process.run('route', ['delete', dest]);
     }

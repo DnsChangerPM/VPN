@@ -42,6 +42,65 @@ Network Destination        Netmask          Gateway       Interface  Metric
 ===========================================================================
 ''';
 
+/// A full `route print` the way Windows 8.1 prints it after the tunnel is up:
+/// interface list, `===` separators, the IPv4 table and an IPv6 table with a
+/// different column order. The default route through the tunnel is stored as
+/// an **on-link** route (gateway = the adapter's own address), so its Gateway
+/// column is the word "On-link" — not an IP.
+const _routePrintFullOnLink = '''
+===========================================================================
+Interface List
+  12...1a-2b-3c-4d-5e-6f ..................................Ethernet
+  42...aa-bb-cc-dd-ee-ff ..................................Nimbus
+  ...........................
+===========================================================================
+IPv4 Route Table
+===========================================================================
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0         On-link         198.18.0.1       5
+          0.0.0.0          0.0.0.0       192.168.1.1     192.168.1.50      25
+        127.0.0.0        255.0.0.0         On-link         127.0.0.1     331
+        127.0.0.1  255.255.255.255         On-link         127.0.0.1     331
+      192.168.1.0    255.255.255.0         On-link     192.168.1.50     266
+    192.168.1.50  255.255.255.255         On-link     192.168.1.50     266
+    198.18.0.0    255.255.255.252         On-link         198.18.0.1     281
+  255.255.255.255  255.255.255.255         On-link         198.18.0.1     281
+===========================================================================
+Persistent Routes:
+  None
+IPv6 Route Table
+===========================================================================
+Active Routes:
+ If Metric Network Destination         Gateway
+ -- ----- -------------------------  --------------------------
+  1  331                          ::1  on-link
+ 12    25            fe80::1a2b:3c4d:5e6f::/64  on-link
+ 42    25                       fe80::aabb:ccdd:eeff::/64  on-link
+ 42    25                              ff00::/8  on-link
+  1  331                         *  *
+===========================================================================
+''';
+
+/// Same table on a Persian-language Windows: the section header and the
+/// on-link word are localized, everything else (numbers, IPs) is not.
+const _routePrintPersianOnLink = '''
+مسیرهای فعال:
+وجه مقصد شبکه        ماسک شبکه          دروازه        رابط  متریک
+          0.0.0.0          0.0.0.0       روی پیوند        198.18.0.1       5
+          0.0.0.0          0.0.0.0      192.168.1.1     192.168.1.50      25
+===========================================================================
+''';
+
+/// The only default route is the tunnel's, stored on-link — exactly the
+/// moment between `route add` succeeding and the verification running.
+const _routePrintTunnelOnLinkOnly = '''
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0         On-link         198.18.0.1       5
+===========================================================================
+''';
+
 void main() {
   group('netsh interface parsing', () {
     test('reads index, state and names that contain spaces', () {
@@ -98,6 +157,64 @@ void main() {
           0.0.0.0          0.0.0.0         0.0.0.0     198.18.0.1     25
 ''';
       expect(Netsh.hasDefaultRoute(onLink, '198.18.0.1'), isTrue);
+    });
+
+    test('sees an on-link default route the way Windows 8.1 prints it', () {
+      // The Gateway column holds the localized word "On-link", not an IP.
+      // The old check (regex demanding an IP there) reported this table as
+      // "no route" and turned a working tunnel into "device VPN unavailable".
+      expect(Netsh.hasDefaultRoute(_routePrintFullOnLink, '198.18.0.1'),
+          isTrue);
+      expect(Netsh.hasDefaultRoute(_routePrintPersianOnLink, '198.18.0.1'),
+          isTrue);
+      expect(Netsh.hasDefaultRoute(_routePrintTunnelOnLinkOnly, '198.18.0.1'),
+          isTrue);
+      // And it still says "no" when only the physical default route exists.
+      expect(
+          Netsh.hasDefaultRoute(_routePrintFullOnLink.replaceAll(
+              RegExp(r'0\.0\.0\.0\s+0\.0\.0\.0\s+On-link\s+198\.18\.0\.1\s+5'),
+              ''), '198.18.0.1'),
+          isFalse);
+    });
+
+    test('parseRouteLines keeps only IPv4 route rows', () {
+      final rows = Netsh.parseRouteLines(_routePrintFullOnLink);
+      // 8 IPv4 active rows: 2 defaults + 6 host/subnet routes.
+      expect(rows.length, 8);
+      // Interface list, separators, headers, "None" and the whole IPv6
+      // table (different column order) are all skipped.
+      expect(rows.every((r) => RouteLine.ipPattern.hasMatch(r.interfaceAddress)),
+          isTrue);
+      final tunnel =
+          rows.firstWhere((r) => r.interfaceAddress == '198.18.0.1');
+      expect(tunnel.destination, '0.0.0.0');
+      expect(tunnel.mask, '0.0.0.0');
+      expect(tunnel.gateway, 'On-link');
+      expect(tunnel.isOnLink, isTrue);
+      expect(tunnel.metric, 5);
+    });
+
+    test('parseRouteLines survives a localized on-link word with a space',
+        () {
+      final rows = Netsh.parseRouteLines(_routePrintPersianOnLink);
+      expect(rows.length, 2);
+      expect(rows[0].gateway, 'روی پیوند');
+      expect(rows[0].isOnLink, isTrue);
+      expect(rows[0].interfaceAddress, '198.18.0.1');
+    });
+
+    test('never treats an on-link default as a usable upstream gateway', () {
+      // On-link rows carry no next hop: a machine whose only default route
+      // is the tunnel's (or a broken on-link one) has no upstream to bypass
+      // through, so parseGateway must come back empty rather than looping.
+      expect(Netsh.parseGateway(_routePrintTunnelOnLinkOnly, ignore: '198.18.0.1'),
+          isNull);
+      // With both defaults present the on-link one is skipped and the real
+      // gateway wins.
+      expect(Netsh.parseGateway(_routePrintFullOnLink, ignore: '198.18.0.1'),
+          '192.168.1.1');
+      expect(Netsh.parseGateway(_routePrintPersianOnLink, ignore: '198.18.0.1'),
+          '192.168.1.1');
     });
 
     test('never captures the tunnel address as the real gateway', () {
