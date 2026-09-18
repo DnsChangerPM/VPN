@@ -16,6 +16,11 @@ class UpdateService {
   static final latestUri =
       Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest');
   static const githubHtml = 'https://github.com/$owner/$repo/releases';
+  static final _allowedHost = 'github.com';
+  static final _allowedPrefix =
+      'https://github.com/$owner/$repo/releases/download/';
+  static final _objectsPrefix =
+      'https://objects.githubusercontent.com/';
 
   Future<UpdateInfo> check() async {
     final info = await PackageInfo.fromPlatform();
@@ -43,27 +48,43 @@ class UpdateService {
       String? exe;
       String? apkSha;
       String? exeSha;
+      String? sumsUrl;
+      final assets = <String, String>{};
+      final digests = <String, String>{};
       for (final asset in (json['assets'] as List? ?? const [])) {
         final map = Map<String, dynamic>.from(asset as Map);
-        final name = '${map['name']}'.toLowerCase();
+        final name = '${map['name']}';
         final url = '${map['browser_download_url']}';
+        if (!_allowedUrl(url)) continue;
+        assets[name.toLowerCase()] = url;
         final digest = '${map['digest'] ?? ''}'.replaceFirst('sha256:', '');
-        if (name.endsWith('.apk') && !name.contains('armv7') && apk == null) {
+        if (digest.length == 64) digests[name.toLowerCase()] = digest;
+        if (name.toLowerCase() == 'sha256sums.txt') sumsUrl = url;
+        if (name.toLowerCase().endsWith('.apk') &&
+            name.toLowerCase().contains('universal')) {
           apk = url;
           if (digest.length == 64) apkSha = digest;
         }
-        if (name.contains('universal') && name.endsWith('.apk')) {
+        if (name.toLowerCase().endsWith('.apk') && apk == null) {
           apk = url;
           if (digest.length == 64) apkSha = digest;
         }
-        if (name.endsWith('.exe') && name.contains('windows') && exe == null) {
+        if (name.toLowerCase().contains('installer') &&
+            name.toLowerCase().endsWith('.exe')) {
           exe = url;
           if (digest.length == 64) exeSha = digest;
         }
-        if (name.contains('installer') && name.endsWith('.exe')) {
+        if (name.toLowerCase().endsWith('.exe') &&
+            name.toLowerCase().contains('windows') &&
+            exe == null) {
           exe = url;
           if (digest.length == 64) exeSha = digest;
         }
+      }
+      if (sumsUrl != null && (apkSha == null || exeSha == null)) {
+        final sums = await _loadSums(sumsUrl);
+        apkSha ??= _sumFor(sums, assets, apk);
+        exeSha ??= _sumFor(sums, assets, exe);
       }
       return UpdateInfo(
         current: current,
@@ -81,11 +102,58 @@ class UpdateService {
     }
   }
 
+  Future<Map<String, String>> _loadSums(String url) async {
+    try {
+      final res = await http.get(Uri.parse(url), headers: {
+        'User-Agent': 'NimbusVPN/${AppInfo.version}',
+      }).timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return {};
+      return parseSha256Sums(res.body);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static String? _sumFor(
+    Map<String, String> sums,
+    Map<String, String> assets,
+    String? url,
+  ) {
+    if (url == null) return null;
+    final name = url.split('/').last.toLowerCase();
+    return sums[name];
+  }
+
+  static Map<String, String> parseSha256Sums(String body) {
+    final map = <String, String>{};
+    for (final line in body.split(RegExp(r'\r?\n'))) {
+      final m = RegExp(r'^([a-fA-F0-9]{64})\s+\*?(.+)$').firstMatch(line.trim());
+      if (m != null) {
+        map[m.group(2)!.split(RegExp(r'[/\\]')).last.toLowerCase()] =
+            m.group(1)!.toLowerCase();
+      }
+    }
+    return map;
+  }
+
+  static bool _allowedUrl(String url) {
+    final u = url.toLowerCase();
+    if (u.startsWith(_allowedPrefix.toLowerCase())) return true;
+    if (u.startsWith(_objectsPrefix)) return true;
+    final parsed = Uri.tryParse(url);
+    return parsed != null &&
+        parsed.host == _allowedHost &&
+        parsed.path.contains('/$owner/$repo/');
+  }
+
   Future<File> download({
     required String url,
     String? expectedSha256,
     required void Function(double progress) onProgress,
   }) async {
+    if (!_allowedUrl(url)) {
+      throw const HttpException('update URL is not from this repository');
+    }
     final dir = await getTemporaryDirectory();
     final name = url.split('/').last;
     final file = File(p.join(dir.path, name));

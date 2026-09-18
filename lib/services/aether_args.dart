@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import '../models/settings.dart';
 
 class AetherLaunch {
@@ -20,7 +22,9 @@ class AetherLaunch {
     final protocol = override ?? settings.protocol;
     final args = <String>[
       '--bind',
-      settings.socksBind,
+      settings.lanShare && Platform.isWindows
+          ? '0.0.0.0:${settings.socksPort}'
+          : settings.socksBind,
       '--scan',
       settings.scan.name,
       '--noize',

@@ -102,6 +102,26 @@ class PlatformEngine {
     if (Platform.isWindows) return WindowsEngine.instance.isAdmin();
     return false;
   }
+
+  Future<bool> isWifi() async {
+    if (!Platform.isAndroid) return true;
+    final ok = await _channel.invokeMethod<bool>('isWifi');
+    return ok ?? true;
+  }
+
+  Future<bool> verifyApk(String path) async {
+    if (!Platform.isAndroid) return true;
+    final ok = await _channel.invokeMethod<bool>('verifyApk', {'path': path});
+    return ok ?? false;
+  }
+
+  Future<void> saveNativePrefs(VpnSettings settings) async {
+    if (!Platform.isAndroid) return;
+    await _channel.invokeMethod('savePrefs', {
+      'autoConnect': settings.autoConnect,
+      'lanShare': settings.lanShare,
+    });
+  }
 }
 
 class WindowsEngine {
@@ -231,6 +251,11 @@ class WindowsEngine {
   Future<void> recover() async {
     await stop();
     await Process.run('ipconfig', ['/flushdns'], runInShell: true);
+    await Process.run(
+      'netsh',
+      ['interface', 'set', 'interface', 'Nimbus', 'admin=disable'],
+      runInShell: true,
+    );
   }
 
   Future<bool> _waitSocks() async {

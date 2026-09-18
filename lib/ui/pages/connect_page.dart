@@ -95,10 +95,35 @@ class ConnectPage extends StatelessWidget {
             ),
           ),
         ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: snap.phase == EnginePhase.connected
+                ? const Color(0x3327D7F2)
+                : snap.phase == EnginePhase.error
+                    ? const Color(0x33FF5D67)
+                    : NimbusColors.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: NimbusColors.line),
+          ),
+          child: Text(
+            title,
+            style: TextStyle(
+              color: snap.phase == EnginePhase.connected
+                  ? NimbusColors.cyan
+                  : snap.phase == EnginePhase.error
+                      ? NimbusColors.coral
+                      : NimbusColors.muted,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
         Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
         Text(
-          snap.message.isEmpty ? s.socksHint : snap.message,
+          snap.message.isEmpty ? s.socksHint(c.settings.socksPort) : snap.message,
           textAlign: TextAlign.center,
           style: const TextStyle(color: NimbusColors.muted),
         ),
@@ -133,9 +158,11 @@ class ConnectPage extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: Text(
-            snap.location.isEmpty
-                ? (snap.ip.isEmpty ? s.freeNote : snap.ip)
-                : '${s.location}: ${snap.location}  ${snap.ip}',
+            snap.isActive && snap.location.isEmpty && snap.ip.isEmpty
+                ? s.detecting
+                : snap.location.isEmpty
+                    ? (snap.ip.isEmpty ? s.freeNote : snap.ip)
+                    : '${s.location}: ${snap.location}  ${snap.ip}',
             textAlign: TextAlign.center,
             style: const TextStyle(color: NimbusColors.muted, fontSize: 13),
           ),

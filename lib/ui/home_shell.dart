@@ -30,6 +30,14 @@ class _HomeShellState extends State<HomeShell> {
       animation: c,
       builder: (context, _) {
         final titles = [s.navConnect, s.navConfig, s.navSettings, s.navDiag, s.navAbout];
+        final toast = c.toast;
+        if (toast != null && toast.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(toast)));
+            c.toast = null;
+          });
+        }
         return Scaffold(
           drawer: _Drawer(
             s: s,

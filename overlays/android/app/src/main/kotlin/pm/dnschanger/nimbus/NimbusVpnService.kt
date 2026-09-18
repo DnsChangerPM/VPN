@@ -33,6 +33,7 @@ class NimbusVpnService : VpnService() {
     private var protocol: String = ""
     private var socksPort: Int = 1819
     private var tunMtu: Int = 1400
+    private val lanProxy = LanProxyServer()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -71,6 +72,7 @@ class NimbusVpnService : VpnService() {
             val kill = extras?.getBoolean(EXTRA_KILL, true) ?: true
             val bypassLan = extras?.getBoolean(EXTRA_BYPASS_LAN, true) ?: true
             val ipv6 = extras?.getBoolean(EXTRA_IPV6, false) ?: false
+            val lanShare = extras?.getBoolean(EXTRA_LAN_SHARE, false) ?: false
 
             val bin = File(applicationInfo.nativeLibraryDir, "libaether.so")
             if (!bin.exists()) throw IllegalStateException("libaether.so missing")
@@ -86,6 +88,16 @@ class NimbusVpnService : VpnService() {
             emit("status", "connecting", "SOCKS5 ready")
 
             persistLast(extras)
+            if (lanShare) {
+                val lanPort = if (socksPort in 1..65534) socksPort + 1 else 1820
+                if (lanProxy.start(lanPort, "127.0.0.1", socksPort)) {
+                    emit(
+                        "lan",
+                        "connected",
+                        "${lanProxy.address}:${lanProxy.port}|${lanProxy.username}|${lanProxy.password}",
+                    )
+                }
+            }
             if (mode == "vpn") {
                 val builder = Builder()
                     .setSession("Nimbus")
@@ -179,6 +191,10 @@ class NimbusVpnService : VpnService() {
     private fun stopTunnel() {
         running.set(false)
         try {
+            lanProxy.stop()
+        } catch (_: Throwable) {
+        }
+        try {
             TProxyService.TProxyStopService()
         } catch (_: Throwable) {
         }
@@ -256,6 +272,8 @@ class NimbusVpnService : VpnService() {
             .putBoolean(EXTRA_KILL, extras.getBoolean(EXTRA_KILL, true))
             .putBoolean(EXTRA_BYPASS_LAN, extras.getBoolean(EXTRA_BYPASS_LAN, true))
             .putBoolean(EXTRA_IPV6, extras.getBoolean(EXTRA_IPV6, false))
+            .putBoolean(EXTRA_LAN_SHARE, extras.getBoolean(EXTRA_LAN_SHARE, false))
+            .putBoolean("autoConnect", extras.getBoolean("autoConnect", false))
             .putString(EXTRA_ARGS, args.joinToString("\u0001"))
             .apply()
     }
@@ -277,6 +295,7 @@ class NimbusVpnService : VpnService() {
         b.putBoolean(EXTRA_KILL, p.getBoolean(EXTRA_KILL, true))
         b.putBoolean(EXTRA_BYPASS_LAN, p.getBoolean(EXTRA_BYPASS_LAN, true))
         b.putBoolean(EXTRA_IPV6, p.getBoolean(EXTRA_IPV6, false))
+        b.putBoolean(EXTRA_LAN_SHARE, p.getBoolean(EXTRA_LAN_SHARE, false))
         val args = (p.getString(EXTRA_ARGS, "") ?: "").split("\u0001").filter { it.isNotEmpty() }
         b.putStringArrayList(EXTRA_ARGS, ArrayList(if (args.isEmpty()) listOf("--masque", "-4") else args))
         return b

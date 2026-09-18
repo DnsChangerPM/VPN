@@ -36,6 +36,7 @@ Pushing a `v1.2.0` tag also publishes. Artifacts:
 
 - `Nimbus-VPN-vX.Y.Z-Android-Universal.apk`
 - `Nimbus-VPN-vX.Y.Z-Android-arm64-v8a.apk` / `armeabi-v7a` / `x86_64`
+- `Nimbus-VPN-vX.Y.Z-Android.aab`
 - `Nimbus-VPN-vX.Y.Z-Windows-x64-Installer.exe`
 - `Nimbus-VPN-vX.Y.Z-Windows-x64-Portable.zip`
 - `SHA256SUMS.txt`

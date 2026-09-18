@@ -3,6 +3,9 @@ package pm.dnschanger.nimbus
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
@@ -54,6 +57,8 @@ object NimbusPlugin {
                     intent.putExtra(NimbusVpnService.EXTRA_KILL, args["killSwitch"] != false)
                     intent.putExtra(NimbusVpnService.EXTRA_BYPASS_LAN, args["bypassLan"] != false)
                     intent.putExtra(NimbusVpnService.EXTRA_IPV6, args["ipv6Tunnel"] == true)
+                    intent.putExtra(NimbusVpnService.EXTRA_LAN_SHARE, args["lanShare"] == true)
+                    intent.putExtra("autoConnect", args["autoConnect"] == true)
                     if (Build.VERSION.SDK_INT >= 26) {
                         activity.startForegroundService(intent)
                     } else {
@@ -75,6 +80,20 @@ object NimbusPlugin {
                 )
                 "listApps" -> result.success(listApps(activity))
                 "recover" -> result.success(null)
+                "isWifi" -> result.success(isWifi(activity))
+                "verifyApk" -> {
+                    val path = (call.arguments as? Map<*, *>)?.get("path")?.toString()
+                    result.success(path != null && verifyApkSigner(activity, path))
+                }
+                "savePrefs" -> {
+                    val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
+                    activity.getSharedPreferences(NimbusVpnService.PREFS, android.content.Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean("autoConnect", args["autoConnect"] == true)
+                        .putBoolean(NimbusVpnService.EXTRA_LAN_SHARE, args["lanShare"] == true)
+                        .apply()
+                    result.success(null)
+                }
                 "installApk" -> {
                     val path = (call.arguments as? Map<*, *>)?.get("path")?.toString()
                     if (path.isNullOrBlank()) {

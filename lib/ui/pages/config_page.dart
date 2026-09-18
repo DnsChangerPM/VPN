@@ -174,8 +174,12 @@ class ConfigPage extends StatelessWidget {
         if (st.lanShare)
           Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: Text('${s.lanAddress}: 0.0.0.0:${st.socksPort}',
-                style: const TextStyle(color: NimbusColors.muted)),
+            child: SelectableText(
+              c.lanEndpoint == null
+                  ? '${s.lanAddress}: ${st.socksBind} → LAN ${st.socksPort + 1}'
+                  : '${s.lanAddress}: ${c.lanEndpoint}\n${s.lanUser}: ${c.lanUser}\n${s.lanPass}: ${c.lanPass}',
+              style: const TextStyle(color: NimbusColors.muted, height: 1.4),
+            ),
           ),
         SwitchListTile(
           value: st.bypassLan,
@@ -243,6 +247,17 @@ class ConfigPage extends StatelessWidget {
             helperText: 'effective ${st.effectiveMtu}',
           ),
         ),
+        _label(s.logLevel),
+        _dropdown(st.logLevel, const {
+          'error': 'error',
+          'warn': 'warn',
+          'info': 'info',
+          'debug': 'debug',
+          'trace': 'trace',
+        }, (v) {
+          st.logLevel = v;
+          c.persist();
+        }),
         _label(s.stallTimeout),
         TextFormField(
           initialValue: '${st.stallTimeout}',

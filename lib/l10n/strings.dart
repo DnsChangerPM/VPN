@@ -101,9 +101,14 @@ class S {
   String get telegram => 'Telegram';
   String get reset => isFa ? 'بازنشانی پیش‌فرض' : 'Reset defaults';
   String get apply => isFa ? 'اعمال' : 'Apply';
-  String get socksHint => isFa
-      ? 'پروکسی محلی: 127.0.0.1:1819'
-      : 'Local proxy: 127.0.0.1:1819';
+  String socksHint(int port) => isFa
+      ? 'پروکسی محلی: 127.0.0.1:$port'
+      : 'Local proxy: 127.0.0.1:$port';
+  String get statusReady => isFa ? 'آماده' : 'Ready';
+  String get lanUser => isFa ? 'کاربر LAN' : 'LAN user';
+  String get lanPass => isFa ? 'رمز LAN' : 'LAN password';
+  String get logLevel => isFa ? 'سطح گزارش' : 'Log level';
+  String get detecting => isFa ? 'در حال تشخیص موقعیت…' : 'Detecting location…';
   String get needVpnPerm => isFa
       ? 'اجازه VPN سیستم لازم است'
       : 'System VPN permission is required';

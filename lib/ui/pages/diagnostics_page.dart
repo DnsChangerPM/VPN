@@ -25,7 +25,9 @@ class DiagnosticsPage extends StatelessWidget {
             FilledButton.tonal(
               onPressed: () async {
                 try {
-                  final r = await SocksProbe.cloudflareTrace();
+                  final r = await SocksProbe.cloudflareTrace(
+                    port: c.settings.socksPort,
+                  );
                   c.log('trace ping ${r.pingMs} ms');
                   for (final line in r.body.split('\n')) {
                     if (line.trim().isNotEmpty) c.log(line.trim());
@@ -65,12 +67,14 @@ class DiagnosticsPage extends StatelessWidget {
           _cell(s.protocol, snap.protocol.isEmpty ? '—' : snap.protocol),
           _cell(s.tunnel, snap.phase.name),
           _cell(s.tun, snap.phase.name == 'connected' ? 'Nimbus' : '—'),
-          _cell('MTU', '8500'),
+          _cell('MTU', '${c.settings.effectiveMtu}'),
           _cell(s.exitIp, snap.ip.isEmpty ? '—' : snap.ip),
           _cell(s.ping, snap.pingMs == null ? '—' : '${snap.pingMs} ms'),
           _cell(s.location, snap.location.isEmpty ? '—' : snap.location),
           _cell(s.coreVersion, 'Aether ${AppInfo.core}'),
           _cell('SOCKS5', c.settings.socksBind),
+          _cell(s.download, '${snap.downloadBytes}'),
+          _cell(s.upload, '${snap.uploadBytes}'),
           _cell(s.endpoint, snap.endpoint.isEmpty ? 'auto' : snap.endpoint),
         ]),
         const SizedBox(height: 16),

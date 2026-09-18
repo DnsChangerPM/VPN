@@ -30,6 +30,9 @@ class VpnController extends ChangeNotifier {
   double downloadProgress = 0;
   String? downloadedPath;
   String? toast;
+  String? lanEndpoint;
+  String? lanUser;
+  String? lanPass;
   Timer? _updateTimer;
   Timer? _statsTimer;
   Timer? _clock;
@@ -66,6 +69,7 @@ class VpnController extends ChangeNotifier {
         ..addAll(list);
       notifyListeners();
     }));
+    await engine.saveNativePrefs(settings);
     notifyListeners();
     unawaited(refreshUpdate());
     _updateTimer = Timer.periodic(const Duration(hours: 12), (_) {
@@ -80,6 +84,7 @@ class VpnController extends ChangeNotifier {
   Future<void> persist() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('settings', jsonEncode(settings.toJson()));
+    await engine.saveNativePrefs(settings);
     notifyListeners();
   }
 
@@ -87,7 +92,8 @@ class VpnController extends ChangeNotifier {
     update = await updates.check();
     notifyListeners();
     if (update?.available == true && settings.autoDownload && !downloading) {
-      unawaited(downloadUpdate());
+      final wifi = await engine.isWifi();
+      if (wifi) unawaited(downloadUpdate());
     }
   }
 
@@ -124,6 +130,13 @@ class VpnController extends ChangeNotifier {
         },
       );
       downloadedPath = file.path;
+      if (Platform.isAndroid) {
+        final same = await engine.verifyApk(file.path);
+        if (!same) {
+          await file.delete();
+          throw const FileSystemException('APK signing certificate mismatch');
+        }
+      }
       await engine.installUpdate(file.path);
     } catch (e) {
       _log('update download failed: $e');
@@ -220,6 +233,7 @@ class VpnController extends ChangeNotifier {
     _wantUp = false;
     _watchdogTries = 0;
     _watchdogTimer?.cancel();
+    lanEndpoint = lanUser = lanPass = null;
     busy = true;
     _statsTimer?.cancel();
     _clock?.cancel();
@@ -304,6 +318,17 @@ class VpnController extends ChangeNotifier {
     final type = event['type']?.toString();
     if (type == 'log') {
       _log('${event['line'] ?? event['message'] ?? ''}');
+      return;
+    }
+    if (type == 'lan') {
+      final raw = event['message']?.toString() ?? '';
+      final parts = raw.split('|');
+      if (parts.length >= 3) {
+        lanEndpoint = parts[0];
+        lanUser = parts[1];
+        lanPass = parts[2];
+        notifyListeners();
+      }
       return;
     }
     if (type == 'status') {

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nimbus/models/settings.dart';
 import 'package:nimbus/services/aether_args.dart';
+import 'package:nimbus/services/update_service.dart';
 
 void main() {
   test('MASQUE args include bind and scan', () {
@@ -37,7 +38,7 @@ void main() {
     final s = VpnSettings(protocol: Protocol.mim, lanShare: true);
     final copy = VpnSettings.fromJson(s.toJson());
     expect(copy.protocol, Protocol.mim);
-    expect(copy.socksBind, '0.0.0.0:1819');
+    expect(copy.socksBind, '127.0.0.1:1819');
   });
 
   test('smart ladder walks transports', () {
@@ -54,12 +55,22 @@ void main() {
 
   test('custom socks bind and env MTU', () {
     final s = VpnSettings(socksPort: 1900, lanShare: true, tunMtu: 2000, protocol: Protocol.masque);
-    expect(s.socksBind, '0.0.0.0:1900');
+    expect(s.socksBind, '127.0.0.1:1900');
     expect(s.effectiveMtu, 1400);
     final args = AetherLaunch.build(s);
-    expect(args, contains('0.0.0.0:1900'));
+    expect(args, contains('127.0.0.1:1900'));
     expect(AetherLaunch.environment(s)['AETHER_MASQUE_MTU'], '1400');
     expect(AetherLaunch.environment(s)['AETHER_LOG'], 'info');
+  });
+
+  test('SHA256SUMS parser', () {
+    const body = '''
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Nimbus-VPN-v1.2.3-Android-Universal.apk
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *Nimbus-VPN-v1.2.3-Windows-x64-Installer.exe
+''';
+    final map = UpdateService.parseSha256Sums(body);
+    expect(map['nimbus-vpn-v1.2.3-android-universal.apk'], startsWith('aaaa'));
+    expect(map['nimbus-vpn-v1.2.3-windows-x64-installer.exe'], startsWith('bbbb'));
   });
 
   test('advanced settings roundtrip', () {

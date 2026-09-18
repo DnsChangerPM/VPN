@@ -89,8 +89,9 @@ class VpnSettings {
     return v > cap ? cap : v;
   }
 
-  String get socksBind =>
-      '${lanShare ? '0.0.0.0' : '127.0.0.1'}:$socksPort';
+  /// Aether itself always listens on loopback. LAN sharing is an authenticated
+  /// relay on Android and `--bind 0.0.0.0` on Windows.
+  String get socksBind => '127.0.0.1:$socksPort';
 
   Map<String, dynamic> toJson() => {
         'mode': mode.name,

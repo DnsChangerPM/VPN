@@ -133,10 +133,16 @@ jobs:
             "release/Nimbus-VPN-v${VER}-Android-arm64-v8a.apk"
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk \
             "release/Nimbus-VPN-v${VER}-Android-x86_64.apk"
+          flutter build appbundle --release \
+            --dart-define=NIMBUS_VERSION=$VER
+          cp build/app/outputs/bundle/release/app-release.aab \
+            "release/Nimbus-VPN-v${VER}-Android.aab"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: release/*.apk
+          path: |
+            release/*.apk
+            release/*.aab
 
   windows:
     needs: version
@@ -204,7 +210,7 @@ jobs:
           TAG="v${VERSION}"
           PRE="${{ needs.version.outputs.prerelease }}"
           mkdir -p release
-          find dist -type f \( -name '*.apk' -o -name '*.exe' -o -name '*.zip' \) -exec cp {} release/ \;
+          find dist -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.exe' -o -name '*.zip' \) -exec cp {} release/ \;
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
           USER_NOTES="${NOTES_BODY:-}"
@@ -220,6 +226,7 @@ jobs:
           - \`Nimbus-VPN-v${VERSION}-Android-arm64-v8a.apk\` — 64-bit ARM (most phones)
           - \`Nimbus-VPN-v${VERSION}-Android-armeabi-v7a.apk\` — 32-bit ARM
           - \`Nimbus-VPN-v${VERSION}-Android-x86_64.apk\` — 64-bit x86 emulators
+          - \`Nimbus-VPN-v${VERSION}-Android.aab\` — Play App Bundle
           - \`Nimbus-VPN-v${VERSION}-Windows-x64-Installer.exe\` — Windows 8.1 through 11 (x64)
           - \`Nimbus-VPN-v${VERSION}-Windows-x64-Portable.zip\` — portable Windows build
 
