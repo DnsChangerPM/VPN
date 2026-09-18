@@ -103,6 +103,17 @@ jobs:
         run: flutter create . --project-name nimbus --org pm.dnschanger --platforms=android
       - name: Apply overlays
         run: python3 scripts/apply_overlays.py
+      - name: Sanitize Gradle properties (AGP 8.1+ fix)
+        run: |
+          echo "Cleaning deprecated android.bundle.enableUncompressedNativeLibs (removed in AGP 8.1)"
+          sed -i '/android.bundle.enableUncompressedNativeLibs/d' android/gradle.properties || true
+          if [ -f android/app/gradle.properties ]; then
+            sed -i '/android.bundle.enableUncompressedNativeLibs/d' android/app/gradle.properties || true
+          fi
+          echo "=== android/gradle.properties ==="
+          cat android/gradle.properties || true
+          echo "=== android/app/build.gradle.kts ==="
+          cat android/app/build.gradle.kts 2>/dev/null | head -n 150 || cat android/app/build.gradle 2>/dev/null | head -n 150 || true
       - name: Fetch Aether Android cores
         run: bash scripts/fetch_cores.sh android
       - name: Build HEV JNI
@@ -150,8 +161,21 @@ jobs:
   windows:
     needs: version
     runs-on: windows-latest
+    env:
+      CMAKE_GENERATOR: "Visual Studio 17 2022"
+      CMAKE_GENERATOR_PLATFORM: "x64"
     steps:
       - uses: actions/checkout@v4
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.28'
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -167,7 +191,22 @@ jobs:
         shell: bash
         run: bash scripts/fetch_cores.sh windows
       - run: flutter pub get
-      - run: flutter build windows --release --dart-define=NIMBUS_VERSION=${{ needs.version.outputs.version }}
+      - name: Clean previous build
+        run: |
+          flutter clean
+          if (Test-Path build) { Remove-Item build -Recurse -Force }
+        shell: pwsh
+      - name: Verify Visual Studio
+        shell: pwsh
+        run: |
+          vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          cmake --version
+          msbuild -version
+          echo "CMAKE_GENERATOR=$env:CMAKE_GENERATOR"
+      - name: Build Windows
+        env:
+          CMAKE_GENERATOR: "Visual Studio 17 2022"
+        run: flutter build windows --release --dart-define=NIMBUS_VERSION=${{ needs.version.outputs.version }}
       - name: Stage sidecars
         shell: pwsh
         run: |
