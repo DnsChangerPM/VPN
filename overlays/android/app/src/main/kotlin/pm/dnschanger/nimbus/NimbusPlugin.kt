@@ -3,7 +3,9 @@ package pm.dnschanger.nimbus
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -182,5 +184,64 @@ object NimbusPlugin {
                 )
             }
             .sortedBy { it["label"] }
+    }
+
+    private fun isWifi(activity: Activity): Boolean {
+        val cm = activity.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val capabilities = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    private fun ownSignature(activity: Activity): Signature? {
+        val info: PackageInfo = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                activity.packageManager.getPackageInfo(
+                    activity.packageName,
+                    PackageManager.GET_SIGNING_CERTIFICATES,
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                activity.packageManager.getPackageInfo(
+                    activity.packageName,
+                    PackageManager.GET_SIGNATURES,
+                )
+            }
+        } catch (_: PackageManager.NameNotFoundException) {
+            return null
+        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners?.firstOrNull()
+        } else {
+            @Suppress("DEPRECATION")
+            info.signatures?.firstOrNull()
+        }
+    }
+
+    private fun verifyApkSigner(activity: Activity, path: String): Boolean {
+        val own = ownSignature(activity) ?: return false
+        val downloaded = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                activity.packageManager.getPackageArchiveInfo(
+                    path,
+                    PackageManager.GET_SIGNING_CERTIFICATES,
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                activity.packageManager.getPackageArchiveInfo(
+                    path,
+                    PackageManager.GET_SIGNATURES,
+                )
+            }
+        } catch (_: Exception) {
+            return false
+        } ?: return false
+        val theirs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            downloaded.signingInfo?.apkContentsSigners?.firstOrNull()
+        } else {
+            @Suppress("DEPRECATION")
+            downloaded.signatures?.firstOrNull()
+        }
+        return theirs != null && own.toByteArray().contentEquals(theirs.toByteArray())
     }
 }

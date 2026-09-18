@@ -27,38 +27,46 @@ def _ensure_kts_packaging(text: str) -> str:
     """Ensure Kotlin DSL has packaging.jniLibs.useLegacyPackaging = true"""
     if "useLegacyPackaging" in text:
         return text
-    # Insert packaging block right after android {
-    # Find first android { occurrence
-    m = re.search(r"android\s*\{", text)
-    if m:
-        insert_pos = m.end()
-        packaging_block = """
-    packaging {
+    return _ensure_extra(
+        text,
+        "useLegacyPackaging",
+        """    packaging {
         jniLibs {
             useLegacyPackaging = true
         }
-    }
-"""
-        text = text[:insert_pos] + packaging_block + text[insert_pos:]
-    return text
+    }""",
+    )
 
 
 def _ensure_groovy_packaging(text: str) -> str:
     """Ensure Groovy DSL has packaging with useLegacyPackaging true"""
     if "useLegacyPackaging" in text:
         return text
-    m = re.search(r"android\s*\{", text)
-    if m:
-        insert_pos = m.end()
-        packaging_block = """
-    packaging {
+    return _ensure_extra(
+        text,
+        "useLegacyPackaging",
+        """    packaging {
         jniLibs {
             useLegacyPackaging true
         }
-    }
-"""
-        text = text[:insert_pos] + packaging_block + text[insert_pos:]
-    return text
+    }""",
+    )
+
+
+def _ensure_extra(ctx: str, needle: str, extra: str) -> str:
+    """Insert `extra` right after the first `android {` if `needle` isn't present.
+
+    Flutter scaffolds (3.27.4 Kotlin and Groovy alike) use a single android {}
+    configuration block, so inserting after its opening brace puts the extra
+    inside the block.
+    """
+    if needle in ctx:
+        return ctx
+    m = re.search(r"android\s*\{", ctx)
+    if m is None:
+        return ctx
+    pos = m.end()
+    return ctx[:pos] + "\n" + extra + ctx[pos:]
 
 
 def patch_android_gradle() -> None:
@@ -76,22 +84,31 @@ def patch_android_gradle() -> None:
     text = re.sub(r"targetSdk\s*=\s*.+", "targetSdk = 35", text)
     text = re.sub(r"targetSdkVersion\s+.+", "targetSdkVersion 35", text)
 
-    # Ensure NDK abiFilters
+    # Ensure the applicationId is set. The apply_overlays AndroidManifest uses the
+    # ${applicationId} manifest placeholder and a ${applicationId}.files FileProvider
+    # authority, which breaks APK signing/build without an explicit applicationId.
+    if "applicationId" not in text:
+        if path.suffix == ".kts":
+            text = _ensure_extra(
+                text,
+                "applicationId",
+                '    applicationId = "pm.dnschanger.nimbus"',
+            )
+        else:
+            text = _ensure_extra(text, "applicationId", '    applicationId "pm.dnschanger.nimbus"')
+
+    # Ensure NDK abiFilters (inside defaultConfig, the documented location).
     if "abiFilters" not in text:
         if path.suffix == ".kts":
             text = text.replace(
                 "defaultConfig {",
-                """defaultConfig {
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-        }""",
+                'defaultConfig {\n        ndk {\n            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")\n        }',
                 1,
             )
         else:
             text = text.replace(
                 "defaultConfig {",
-                """defaultConfig {
-        ndk { abiFilters "armeabi-v7a", "arm64-v8a", "x86_64" }""",
+                'defaultConfig {\n        ndk {\n            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"\n        }',
                 1,
             )
 
@@ -133,25 +150,24 @@ def patch_android_gradle() -> None:
 
     if "ANDROID_KEYSTORE_PATH" not in text:
         if path.suffix == ".kts":
-            text = text.replace("buildTypes {", signing_kts + "\n    buildTypes {", 1)
+            # Insert the env-driven signingConfigs right before buildTypes.
+            text = text.replace("buildTypes {", signing_kts.strip("\n") + "\n\n    buildTypes {", 1)
+            # Point the release build type at the env-driven config, falling back
+            # to debug when ANDROID_KEYSTORE_PATH isn't set.
             text = text.replace(
-                "isMinifyEnabled = false",
-                """isMinifyEnabled = false
-            signingConfig = if (signingConfigs.findByName("release") != null)
+                "signingConfig = signingConfigs.debug",
+                """signingConfig = if (signingConfigs.findByName("release") != null)
                 signingConfigs.getByName("release") else signingConfigs.getByName("debug")""",
                 1,
             )
         else:
-            # Groovy signing
-            text = text.replace("buildTypes {", signing_groovy + "\n    buildTypes {", 1)
-            # For groovy, set signingConfig in release
-            if "signingConfig signingConfigs.release" not in text:
-                text = re.sub(
-                    r"buildTypes\s*\{\s*release\s*\{",
-                    "buildTypes {\n        release {\n            if (signingConfigs.findByName(\"release\") != null) { signingConfig signingConfigs.release }",
-                    text,
-                    count=1,
-                )
+            text = text.replace("buildTypes {", signing_groovy.strip("\n") + "\n\n    buildTypes {", 1)
+            # Use the release config when the keystore env is set, else debug.
+            text = text.replace(
+                "signingConfig signingConfigs.debug",
+                "signingConfig signingConfigs.findByName(\"release\") ?: signingConfigs.debug",
+                1,
+            )
 
     path.write_text(text, encoding="utf-8")
     print("patched", path.relative_to(ROOT))

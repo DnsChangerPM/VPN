@@ -160,7 +160,10 @@ jobs:
 
   windows:
     needs: version
-    runs-on: windows-latest
+    # Pin to windows-2022: the VS2026 "windows-latest" image isn't supported by
+    # Flutter 3.27.4, whose tooling maps any non-17 VS major version to the
+    # "Visual Studio 16 2019" CMake generator (flutter_tools visual_studio.dart).
+    runs-on: windows-2022
     env:
       CMAKE_GENERATOR: "Visual Studio 17 2022"
       CMAKE_GENERATOR_PLATFORM: "x64"

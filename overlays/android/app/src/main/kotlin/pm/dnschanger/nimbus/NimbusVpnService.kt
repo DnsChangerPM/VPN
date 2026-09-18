@@ -393,6 +393,7 @@ class NimbusVpnService : VpnService() {
         const val EXTRA_KILL = "killSwitch"
         const val EXTRA_BYPASS_LAN = "bypassLan"
         const val EXTRA_IPV6 = "ipv6Tunnel"
+        const val EXTRA_LAN_SHARE = "lanShare"
         const val PREFS = "nimbus_vpn"
         val running = AtomicBoolean(false)
         @Volatile var lastExtras: Bundle? = null
