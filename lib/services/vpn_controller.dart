@@ -40,6 +40,7 @@ class VpnController extends ChangeNotifier {
   StreamSubscription? _events;
   StreamSubscription? _winLogs;
   bool _wantUp = false;
+  bool _userDisconnect = false;
   int _watchdogTries = 0;
   DateTime? _lastHealthy;
 
@@ -102,7 +103,8 @@ class VpnController extends ChangeNotifier {
     if (info == null) return;
     await downloadUpdate();
     if (downloadedPath == null && info.htmlUrl != null) {
-      await launchUrl(Uri.parse(info.htmlUrl!), mode: LaunchMode.externalApplication);
+      await launchUrl(Uri.parse(info.htmlUrl!),
+          mode: LaunchMode.externalApplication);
     }
   }
 
@@ -113,7 +115,8 @@ class VpnController extends ChangeNotifier {
     final sha = Platform.isAndroid ? info.apkSha256 : info.exeSha256;
     if (url == null) {
       if (info.htmlUrl != null) {
-        await launchUrl(Uri.parse(info.htmlUrl!), mode: LaunchMode.externalApplication);
+        await launchUrl(Uri.parse(info.htmlUrl!),
+            mode: LaunchMode.externalApplication);
       }
       return;
     }
@@ -148,9 +151,23 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> toggle() async {
-    if (busy) return;
-    if (snapshot.phase == EnginePhase.connected) {
+    if (snapshot.phase == EnginePhase.connected ||
+        snapshot.phase == EnginePhase.error ||
+        snapshot.phase == EnginePhase.disconnecting) {
       await disconnect();
+      return;
+    }
+    // Any mid-flight state cancels the in-flight attempt so the orb never
+    // becomes a dead spinner: the native/engine stop unwinds the pipeline.
+    if (snapshot.isActive || busy) {
+      _wantUp = false;
+      _userDisconnect = true;
+      _watchdogTimer?.cancel();
+      _set(snapshot.copyWith(
+          phase: EnginePhase.disconnecting, message: s.disconnecting));
+      unawaited(engine.stop().whenComplete(() {
+        _set(const EngineSnapshot());
+      }));
       return;
     }
     await connect();
@@ -159,6 +176,7 @@ class VpnController extends ChangeNotifier {
   Future<void> connect() async {
     if (busy) return;
     _wantUp = true;
+    _userDisconnect = false;
     busy = true;
     _set(snapshot.copyWith(
       phase: EnginePhase.preparing,
@@ -177,15 +195,16 @@ class VpnController extends ChangeNotifier {
       }
       if (settings.mode == ConnectionMode.vpn && Platform.isWindows) {
         final admin = await engine.isElevated();
-        if (!admin) {
-          _log(s.needAdmin);
-        }
+        if (!admin) _log(s.needAdmin);
       }
       final ladder = AetherLaunch.smartLadder(settings);
       var lastError = 'connect failed';
       for (var i = 0; i < ladder.length; i++) {
-        var proto = ladder[i];
+        if (!_wantUp) return;
+        final proto = ladder[i];
         final attempt = settings.copyWithProtocol(proto);
+        // Smart Connect: the second MASQUE attempt rides the HTTP/2 carrier,
+        // which is what networks that drop QUIC (UDP 443) let through.
         if (settings.protocol == Protocol.smart && i == 1) {
           attempt.transport = MasqueTransport.h2;
         }
@@ -196,32 +215,47 @@ class VpnController extends ChangeNotifier {
         ));
         try {
           await engine.start(attempt, protocol: proto);
-          final up = await _waitConnected();
-          if (up) {
-            _watchdogTries = 0;
-            _lastHealthy = DateTime.now();
-            _set(snapshot.copyWith(
-              phase: EnginePhase.connected,
-              protocol: proto.name,
-              message: s.active,
-              connectedAt: DateTime.now(),
-            ));
-            _startStats();
-            _clock?.cancel();
-            _clock = Timer.periodic(const Duration(seconds: 1), (_) {
-              notifyListeners();
-            });
-            return;
-          }
-          lastError = snapshot.message.isEmpty ? 'timeout' : snapshot.message;
-          await engine.stop();
         } catch (e) {
           lastError = '$e';
-          _log('$e');
+          _log('start ${proto.name}: $e');
           await engine.stop();
+          continue;
         }
+        final up = await _waitConnected(proto);
+        if (up) {
+          _watchdogTries = 0;
+          _lastHealthy = DateTime.now();
+          _set(snapshot.copyWith(
+            phase: EnginePhase.connected,
+            protocol: snapshot.protocol.isEmpty
+                ? proto.name
+                : snapshot.protocol,
+            message: snapshot.message.isEmpty ? s.active : snapshot.message,
+            connectedAt: DateTime.now(),
+          ));
+          _startStats();
+          _clock?.cancel();
+          _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+            notifyListeners();
+          });
+          return;
+        }
+        if (!_wantUp) return;
+        lastError = snapshot.phase == EnginePhase.error &&
+                snapshot.message.isNotEmpty
+            ? snapshot.message
+            : (Platform.isWindows &&
+                    WindowsEngine.instance.lastError.isNotEmpty
+                ? WindowsEngine.instance.lastError
+                : 'timeout');
+        _log('${proto.name}: $lastError');
+        await engine.stop();
       }
-      _set(snapshot.copyWith(phase: EnginePhase.error, message: lastError));
+      _set(snapshot.copyWith(
+        phase: EnginePhase.error,
+        message: lastError,
+        clearConnectedAt: true,
+      ));
       _scheduleWatchdog();
     } finally {
       busy = false;
@@ -231,13 +265,15 @@ class VpnController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _wantUp = false;
+    _userDisconnect = true;
     _watchdogTries = 0;
     _watchdogTimer?.cancel();
     lanEndpoint = lanUser = lanPass = null;
     busy = true;
     _statsTimer?.cancel();
     _clock?.cancel();
-    _set(snapshot.copyWith(phase: EnginePhase.disconnecting, message: s.disconnecting));
+    _set(snapshot.copyWith(
+        phase: EnginePhase.disconnecting, message: s.disconnecting));
     try {
       await engine.stop();
     } finally {
@@ -246,11 +282,26 @@ class VpnController extends ChangeNotifier {
     }
   }
 
-  Future<bool> _waitConnected() async {
-    for (var i = 0; i < 120; i++) {
+  /// Waits for the engine (native Android service or Windows process runner)
+  /// to publish `connected`. On Android that state already includes the
+  /// native data-plane proof; on Windows the engine proves traffic itself
+  /// before flipping the phase.
+  Future<bool> _waitConnected(Protocol proto) async {
+    // Generous budget: the gateway scan on a filtered network is the slow
+    // part (AetherGUI gives MASQUE 60s, then races the h2 carrier). Cutting
+    // at 60s while the core is still mid-scan is what produced the endless
+    // spinner and ladder churn.
+    final budget = Platform.isAndroid
+        ? const Duration(seconds: 210)
+        : const Duration(seconds: 150);
+    final deadline = DateTime.now().add(budget);
+    while (DateTime.now().isBefore(deadline)) {
+      if (!_wantUp) return false;
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      if (snapshot.phase == EnginePhase.error) return false;
+      // Native events already flow into _onEvent; polling keeps Windows and
+      // missed broadcasts honest.
       if (snapshot.phase == EnginePhase.connected) return true;
+      if (snapshot.phase == EnginePhase.error) return false;
       try {
         final st = await engine.status();
         final phase = st['phase']?.toString() ?? '';
@@ -258,18 +309,49 @@ class VpnController extends ChangeNotifier {
           _set(snapshot.copyWith(
             phase: EnginePhase.connected,
             endpoint: st['endpoint']?.toString() ?? snapshot.endpoint,
-            protocol: st['protocol']?.toString() ?? snapshot.protocol,
+            protocol: st['protocol']?.toString() ?? proto.name,
+            message:
+                st['message']?.toString() ?? snapshot.message,
           ));
           return true;
         }
-        if (phase == 'error') return false;
+        if (phase == 'error') {
+          final msg = st['message']?.toString() ?? '';
+          _set(snapshot.copyWith(
+            phase: EnginePhase.error,
+            message: msg.isEmpty ? snapshot.message : msg,
+          ));
+          return false;
+        }
+        // A transient 'disconnected' (restart teardown between attempts) is
+        // not terminal: 'error' ends the attempt, '_wantUp' handles cancel.
+        // Progress details for the spinner subtitle.
+        final msg = st['message']?.toString() ?? '';
+        if (msg.isNotEmpty && msg != snapshot.message) {
+          _set(snapshot.copyWith(message: msg));
+        }
       } catch (_) {}
-      if (Platform.isWindows &&
-          WindowsEngine.instance.phase == EnginePhase.connected) {
-        _set(snapshot.copyWith(phase: EnginePhase.connected));
-        return true;
+      if (Platform.isWindows) {
+        final win = WindowsEngine.instance;
+        if (win.phase == EnginePhase.connected) {
+          _set(snapshot.copyWith(
+            phase: EnginePhase.connected,
+            endpoint: win.endpoint,
+            protocol: win.protocol,
+            message: win.message,
+          ));
+          return true;
+        }
+        if (win.phase == EnginePhase.error) {
+          _set(snapshot.copyWith(
+            phase: EnginePhase.error,
+            message: win.message,
+          ));
+          return false;
+        }
       }
     }
+    _log('connect attempt timed out after ${budget.inSeconds}s');
     return false;
   }
 
@@ -295,10 +377,11 @@ class VpnController extends ChangeNotifier {
         final last = _lastHealthy;
         if (settings.watchdog &&
             last != null &&
-            DateTime.now().difference(last).inSeconds >= settings.stallTimeout) {
+            DateTime.now().difference(last).inSeconds >=
+                settings.stallTimeout) {
           _log('watchdog: stall ${settings.stallTimeout}s');
           _set(snapshot.copyWith(phase: EnginePhase.error, message: 'stalled'));
-          _scheduleWatchdog();
+          _scheduleWatchdog(forceReconnect: true);
         }
       }
       try {
@@ -346,17 +429,17 @@ class VpnController extends ChangeNotifier {
         uploadBytes:
             int.tryParse('${event['upload'] ?? ''}') ?? snapshot.uploadBytes,
       ));
-      if (phase == EnginePhase.error) {
-        _scheduleWatchdog();
-      }
       if (phase == EnginePhase.connected) {
         _watchdogTries = 0;
         _lastHealthy = DateTime.now();
       }
+      if (phase == EnginePhase.error && !_userDisconnect) {
+        _scheduleWatchdog();
+      }
     }
   }
 
-  void _scheduleWatchdog() {
+  void _scheduleWatchdog({bool forceReconnect = false}) {
     if (!_wantUp || !settings.watchdog || _watchdogTries >= 5) return;
     _watchdogTries++;
     _watchdogTimer?.cancel();
@@ -370,6 +453,7 @@ class VpnController extends ChangeNotifier {
         unawaited(connect());
       }
     });
+    if (forceReconnect) _log('watchdog: reconnect scheduled in ${delay.inSeconds}s');
   }
 
   void log(String line) => _log(line);

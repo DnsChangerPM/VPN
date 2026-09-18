@@ -36,10 +36,15 @@ object NimbusPlugin {
                     val intent = Intent(activity, NimbusVpnService::class.java)
                         .setAction(NimbusVpnService.ACTION_START)
                     intent.putStringArrayListExtra(
+                        NimbusVpnService.EXTRA_ENV,
+                        ArrayList((args["env"] as? List<*>)?.map { "$it" } ?: emptyList())
+                    )
+                    intent.putStringArrayListExtra(
                         NimbusVpnService.EXTRA_ARGS,
                         ArrayList((args["args"] as? List<*>)?.map { "$it" } ?: emptyList())
                     )
                     intent.putExtra(NimbusVpnService.EXTRA_PROTOCOL, "${args["protocol"] ?: "masque"}")
+                    intent.putExtra(NimbusVpnService.EXTRA_TRANSPORT, "${args["transport"] ?: "h3"}")
                     intent.putExtra(NimbusVpnService.EXTRA_MODE, "${args["mode"] ?: "vpn"}")
                     intent.putExtra(NimbusVpnService.EXTRA_DNS, args["privateDns"] != false)
                     intent.putExtra(NimbusVpnService.EXTRA_SPLIT_MODE, "${args["splitMode"] ?: "off"}")
@@ -75,11 +80,7 @@ object NimbusPlugin {
                     )
                     result.success(null)
                 }
-                "status" -> result.success(
-                    mapOf(
-                        "phase" to if (NimbusVpnService.running.get()) "connected" else "disconnected",
-                    )
-                )
+                "status" -> result.success(NimbusVpnService.statusMap())
                 "listApps" -> result.success(listApps(activity))
                 "recover" -> result.success(null)
                 "isWifi" -> result.success(isWifi(activity))

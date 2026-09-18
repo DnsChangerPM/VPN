@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../models/engine_state.dart';
 import '../models/settings.dart';
 import 'aether_args.dart';
+import 'socks_probe.dart';
 
 class PlatformEngine {
   static const _channel = MethodChannel('nimbus.vpn/engine');
@@ -27,10 +28,18 @@ class PlatformEngine {
   }
 
   Future<void> start(VpnSettings settings, {Protocol? protocol}) {
+    final proto = protocol ?? settings.protocol;
     final cfg = {
       ...settings.toJson(),
-      'args': AetherLaunch.build(settings, override: protocol),
-      'protocol': (protocol ?? settings.protocol).name,
+      // The native side drives the core through environment variables only
+      // (AetherGUI pattern); it knows its own config/temp paths.
+      'env': AetherLaunch.environmentLines(
+        settings,
+        override: protocol,
+        configPath: 'aether.toml',
+      ),
+      'protocol': (proto == Protocol.smart ? Protocol.masque : proto).name,
+      'transport': settings.transport.name,
       'socksPort': settings.socksPort,
       'tunMtu': settings.effectiveMtu,
       'killSwitch': settings.killSwitch,
@@ -124,6 +133,9 @@ class PlatformEngine {
   }
 }
 
+/// Windows: spawns `aether.exe` (env-only config, like the reference GUI),
+/// waits for a real SOCKS5 handshake, proves the data plane, then puts a
+/// WinTUN + tun2socks full-device tunnel in front when running elevated.
 class WindowsEngine {
   WindowsEngine._();
   static final instance = WindowsEngine._();
@@ -135,11 +147,15 @@ class WindowsEngine {
   String message = '';
   String endpoint = '';
   String protocol = '';
+  String lastError = '';
   String? _originalGw;
   int _socksPort = 1819;
   bool _bypassLan = true;
+  bool _tunActive = false;
   final _bypass = <String>{};
   final _lanBypass = <String>[];
+  final _rangeRoutes = <String>[];
+  String _runDir = '';
 
   Stream<String> get logs => _logs.stream;
 
@@ -159,46 +175,102 @@ class WindowsEngine {
     }
   }
 
+  /// Per-user writable working directory for the core. The identity files
+  /// (aether.toml, aether-masque.toml, lastconn) must live here: writing them
+  /// next to the exe under Program Files fails for non-admin users and the
+  /// core then dies on startup — the classic "connect spins forever".
+  String get runtimeDir {
+    if (_runDir.isNotEmpty) return _runDir;
+    final base = Platform.environment['LOCALAPPDATA'] ??
+        Platform.environment['APPDATA'] ??
+        Directory.systemTemp.path;
+    final dir = Directory(p.join(base, 'Nimbus VPN'));
+    dir.createSync(recursive: true);
+    _runDir = dir.path;
+    return _runDir;
+  }
+
   Future<void> start(VpnSettings settings, {Protocol? protocol}) async {
     await stop();
-    this.protocol = (protocol ?? settings.protocol).name;
+    final proto = protocol ?? settings.protocol;
+    final protoName = proto == Protocol.smart ? 'masque' : proto.name;
+    this.protocol = protoName;
+    lastError = '';
     phase = EnginePhase.scanning;
     message = 'Starting Aether core';
     _emit();
-    final dir = File(Platform.resolvedExecutable).parent.path;
-    final aether = File(p.join(dir, 'aether.exe'));
+
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final aether = File(p.join(exeDir, 'aether.exe'));
     if (!aether.existsSync()) {
-      throw FileSystemException('aether.exe not found', aether.path);
+      // Fall back to the sidecar directory used in development.
+      final sidecar = File(p.join(Directory.current.path, 'third_party',
+          'windows', 'aether.exe'));
+      if (!sidecar.existsSync()) {
+        throw FileSystemException('aether.exe not found', aether.path);
+      }
     }
+
     _socksPort = settings.socksPort;
     _bypassLan = settings.bypassLan;
-    final args = AetherLaunch.build(settings, override: protocol);
+    _tunActive = false;
+    _bypass.clear();
+    _lanBypass.clear();
+    _rangeRoutes.clear();
+
+    final env = AetherLaunch.environment(
+      settings,
+      override: proto,
+      configPath: p.join(runtimeDir, 'aether.toml'),
+    );
+    final aetherPath = aether.existsSync()
+        ? aether.path
+        : p.join(Directory.current.path, 'third_party', 'windows',
+            'aether.exe');
+    _aetherExited = false;
     _aether = await Process.start(
-      aether.path,
-      args,
-      workingDirectory: dir,
-      environment: {
-        ...Platform.environment,
-        ...AetherLaunch.environment(settings),
-        'AETHER_PROTOCOL': this.protocol == 'mim' ? 'masque' : this.protocol,
-      },
+      aetherPath,
+      const [], // env-only configuration (AetherGUI pattern)
+      workingDirectory: runtimeDir,
+      environment: {...Platform.environment, ...env},
     );
     _aether!.stdout.transform(utf8.decoder).listen(_onLog);
     _aether!.stderr.transform(utf8.decoder).listen(_onLog);
     _aether!.exitCode.then((code) {
+      _aetherExited = true;
       if (phase == EnginePhase.connected ||
           phase == EnginePhase.connecting ||
           phase == EnginePhase.scanning) {
         phase = EnginePhase.error;
-        message = 'Aether exited ($code)';
+        message = lastError.isEmpty ? 'Aether exited ($code)' : lastError;
         _emit();
       }
     });
 
-    final ready = await _waitSocks();
+    final ready = await _waitSocks(const Duration(seconds: 90));
     if (!ready) {
+      lastError = lastError.isEmpty
+          ? 'SOCKS5 listener did not start (gateway scan found nothing)'
+          : lastError;
       phase = EnginePhase.error;
-      message = 'SOCKS5 listener did not start';
+      message = lastError;
+      _emit();
+      await stop();
+      return;
+    }
+
+    // Proving traffic is the difference between "connected" and "the core
+    // opened a listener for a tunnel that carries nothing" (AetherGUI's
+    // proven-data-plane gate).
+    phase = EnginePhase.connecting;
+    message = 'Verifying the tunnel';
+    _emit();
+    try {
+      await SocksProbe.prove(port: _socksPort);
+    } catch (e) {
+      lastError = 'tunnel carries no traffic';
+      phase = EnginePhase.error;
+      message = '$e';
       _emit();
       await stop();
       return;
@@ -207,13 +279,22 @@ class WindowsEngine {
     if (settings.mode == ConnectionMode.vpn) {
       final admin = await isAdmin();
       if (!admin) {
+        // Honest degradation: proxy works, but no VPN was requested. Tell the
+        // user exactly what to do instead of silently lying about a TUN.
         phase = EnginePhase.connected;
-        message =
-            'SOCKS5 127.0.0.1:$_socksPort (VPN needs Administrator)';
+        message = 'SOCKS5 127.0.0.1:$_socksPort — restart as Administrator for full VPN';
         _emit();
         return;
       }
-      await _startTun(dir, settings);
+      final ok = await _startTun(exeDir, settings);
+      if (!ok) {
+        phase = EnginePhase.connected;
+        message = lastError.isEmpty
+            ? 'SOCKS5 127.0.0.1:$_socksPort (TUN failed)'
+            : lastError;
+        _emit();
+        return;
+      }
     }
     phase = EnginePhase.connected;
     message = settings.mode == ConnectionMode.vpn
@@ -223,23 +304,33 @@ class WindowsEngine {
   }
 
   Future<void> stop() async {
-    phase = EnginePhase.disconnecting;
-    _emit();
-    try {
-      _tun?.kill(ProcessSignal.sigterm);
-    } catch (_) {}
-    try {
-      _aether?.kill(ProcessSignal.sigterm);
-    } catch (_) {}
+    if (phase == EnginePhase.connected ||
+        phase == EnginePhase.connecting ||
+        phase == EnginePhase.scanning ||
+        phase == EnginePhase.reconnecting) {
+      phase = EnginePhase.disconnecting;
+      _emit();
+    }
+    final aether = _aether;
+    final tun = _tun;
+    _aether = null;
+    _tun = null;
+    void kill(Process? proc) {
+      if (proc == null) return;
+      try {
+        proc.kill(ProcessSignal.sigterm);
+      } catch (_) {}
+    }
+
+    kill(tun);
+    kill(aether);
     await Future<void>.delayed(const Duration(milliseconds: 400));
     try {
-      _tun?.kill(ProcessSignal.sigkill);
+      tun?.kill(ProcessSignal.sigkill);
     } catch (_) {}
     try {
-      _aether?.kill(ProcessSignal.sigkill);
+      aether?.kill(ProcessSignal.sigkill);
     } catch (_) {}
-    _tun = null;
-    _aether = null;
     await _restoreRoutes();
     phase = EnginePhase.disconnected;
     message = '';
@@ -257,16 +348,19 @@ class WindowsEngine {
     );
   }
 
-  Future<bool> _waitSocks() async {
-    for (var i = 0; i < 90; i++) {
-      try {
-        final s = await Socket.connect('127.0.0.1', _socksPort,
-            timeout: const Duration(seconds: 1));
-        s.destroy();
-        return true;
-      } catch (_) {
-        await Future<void>.delayed(const Duration(milliseconds: 700));
-      }
+  bool _aetherExited = false;
+
+  /// Waits for the SOCKS5 listener to answer a real method-selection
+  /// greeting, failing fast when the core exits (bad flags, unwritable
+  /// identity path, no route) instead of hanging the whole budget.
+  Future<bool> _waitSocks(Duration budget) async {
+    final deadline = DateTime.now().add(budget);
+    while (DateTime.now().isBefore(deadline)) {
+      if (_aether == null || _aetherExited) return false;
+      final ok = await SocksProbe.handshake(
+          port: _socksPort, timeout: const Duration(seconds: 2));
+      if (ok) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
     }
     return false;
   }
@@ -281,9 +375,18 @@ class WindowsEngine {
         _bypass.add(ip);
       }
       final lower = line.toLowerCase();
-      if (lower.contains('scan')) phase = EnginePhase.scanning;
+      if (lower.contains('error') ||
+          lower.contains('failed') ||
+          lower.contains('refused')) {
+        lastError = line;
+      }
+      if (lower.contains('scan') ||
+          lower.contains('hunting') ||
+          lower.contains('identity ready')) {
+        if (phase != EnginePhase.connected) phase = EnginePhase.scanning;
+      }
       if (lower.contains('reconnect')) phase = EnginePhase.reconnecting;
-      if (lower.contains('listening') || lower.contains('socks5')) {
+      if (lower.contains('validated') || lower.contains('handshake')) {
         if (phase != EnginePhase.connected) phase = EnginePhase.connecting;
       }
       _emit();
@@ -317,76 +420,124 @@ class WindowsEngine {
     }
   }
 
-  Future<void> _startTun(String dir, VpnSettings settings) async {
+  Future<bool> _startTun(String dir, VpnSettings settings) async {
     await _captureGateway();
     final tun2socks = File(p.join(dir, 'tun2socks.exe'));
-    if (!tun2socks.existsSync()) {
-      message = 'tun2socks.exe missing; SOCKS5 only';
-      return;
+    final wintun = File(p.join(dir, 'wintun.dll'));
+    if (!tun2socks.existsSync() || !wintun.existsSync()) {
+      lastError = 'tun2socks.exe/wintun.dll missing; running SOCKS5 only';
+      _logLine(lastError);
+      return false;
     }
-    _tun = await Process.start(
-      tun2socks.path,
-      [
-        '-device',
-        'tun://Nimbus',
-        '-proxy',
-        'socks5://127.0.0.1:$_socksPort',
-        '-loglevel',
-        'info',
-      ],
-      workingDirectory: dir,
-    );
-    _tun!.stdout.transform(utf8.decoder).listen(_onLog);
-    _tun!.stderr.transform(utf8.decoder).listen(_onLog);
-    await Future<void>.delayed(const Duration(seconds: 2));
-    await Process.run(
+    try {
+      _tun = await Process.start(
+        tun2socks.path,
+        [
+          '-device',
+          'tun://Nimbus',
+          '-proxy',
+          'socks5://127.0.0.1:$_socksPort',
+          '-loglevel',
+          'info',
+        ],
+        workingDirectory: dir,
+      );
+      _tun!.stdout.transform(utf8.decoder).listen(_onLog);
+      _tun!.stderr.transform(utf8.decoder).listen(_onLog);
+    } catch (e) {
+      lastError = 'tun2socks failed to start: $e';
+      return false;
+    }
+
+    // Wait for the WinTUN adapter to materialise, do not assume 2 seconds.
+    var adapterUp = false;
+    for (var i = 0; i < 40; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final r = await Process.run(
+        'netsh',
+        ['interface', 'ip', 'show', 'interfaces'],
+        runInShell: true,
+      );
+      if ('${r.stdout}'.contains('Nimbus')) {
+        adapterUp = true;
+        break;
+      }
+    }
+    if (!adapterUp) {
+      lastError = 'WinTUN adapter "Nimbus" never appeared';
+      _logLine(lastError);
+      return false;
+    }
+
+    final addr = await Process.run(
       'netsh',
       [
-        'interface',
-        'ip',
-        'set',
-        'address',
+        'interface', 'ip', 'set', 'address',
         'name=Nimbus',
         'source=static',
         'addr=198.18.0.1',
-        'mask=255.255.255.0',
+        'mask=255.255.255.252',
       ],
       runInShell: true,
     );
+    if (addr.exitCode != 0) {
+      lastError = 'netsh set address failed: ${addr.stdout}${addr.stderr}';
+      _logLine(lastError);
+      return false;
+    }
     await Process.run(
       'netsh',
       ['interface', 'ip', 'set', 'dns', 'name=Nimbus', 'static', '1.1.1.1'],
       runInShell: true,
     );
-    const ranges = [
-      '162.159.192.0/24',
-      '162.159.193.0/24',
-      '162.159.195.0/24',
-      '188.114.96.0/24',
-      '188.114.97.0/24',
-      '188.114.98.0/24',
-      '188.114.99.0/24',
-      '162.159.36.0/24',
-      '162.159.46.0/24',
+    await Process.run(
+      'netsh',
+      [
+        'interface', 'ip', 'add', 'dns', 'name=Nimbus', '1.0.0.1', 'index=2'
+      ],
+      runInShell: true,
+    );
+
+    // Bypass the tunnel's own upstreams first — missing one is the difference
+    // between a tunnel and a routing loop. The ranges are the full WARP
+    // candidate space the core can scan (aether/src/prober.rs), collapsed
+    // into the documented /20 ingress blocks plus the DoH ranges.
+    const warpRanges = [
+      ['162.159.192.0', '255.255.240.0'], // 162.159.192-207, every MASQUE CIDR
+      ['188.114.96.0', '255.255.240.0'], // 188.114.96-111
+      ['162.159.36.0', '255.255.255.0'],
+      ['162.159.46.0', '255.255.255.0'],
     ];
+    final custom = settings.endpoint.trim();
+    if (custom.isNotEmpty) {
+      final ip = RegExp(r'(\d{1,3}(?:\.\d{1,3}){3})').firstMatch(custom);
+      if (ip != null) _bypass.add(ip.group(1)!);
+    }
     if (_originalGw != null) {
       for (final ip in _bypass) {
         await Process.run(
             'route', ['add', ip, 'mask', '255.255.255.255', _originalGw!],
             runInShell: true);
       }
-      for (final cidr in ranges) {
-        final parts = cidr.split('/');
-        final mask = parts[1] == '24' ? '255.255.255.0' : '255.255.255.255';
-        await Process.run('route', ['add', parts[0], 'mask', mask, _originalGw!],
+      _rangeRoutes.clear();
+      for (final row in warpRanges) {
+        await Process.run(
+            'route', ['add', row[0], 'mask', row[1], _originalGw!],
             runInShell: true);
+        _rangeRoutes.add(row[0]);
       }
     }
-    await Process.run(
+    final def = await Process.run(
       'route',
       ['add', '0.0.0.0', 'mask', '0.0.0.0', '198.18.0.1', 'metric', '5'],
       runInShell: true,
     );
+    if (def.exitCode != 0) {
+      lastError = 'default route install failed';
+      _logLine('route add 0.0.0.0: ${def.stdout}${def.stderr}');
+      return false;
+    }
+    _tunActive = true;
     if (_bypassLan && _originalGw != null) {
       const lan = [
         ['10.0.0.0', '255.0.0.0'],
@@ -400,27 +551,36 @@ class WindowsEngine {
         _lanBypass.add(row[0]);
       }
     }
+    return true;
   }
 
   Future<void> _restoreRoutes() async {
-    await Process.run(
-        'route', ['delete', '0.0.0.0', 'mask', '0.0.0.0', '198.18.0.1'],
-        runInShell: true);
+    if (_tunActive) {
+      await Process.run(
+          'route', ['delete', '0.0.0.0', 'mask', '0.0.0.0', '198.18.0.1'],
+          runInShell: true);
+    }
+    for (final dest in _rangeRoutes) {
+      await Process.run('route', ['delete', dest], runInShell: true);
+    }
     if (_originalGw != null) {
       for (final ip in _bypass) {
         await Process.run('route', ['delete', ip], runInShell: true);
       }
-    }
-    if (_originalGw != null) {
       for (final ip in _lanBypass) {
         await Process.run('route', ['delete', ip], runInShell: true);
       }
     }
-    await Process.run('netsh', ['interface', 'set', 'interface', 'Nimbus', 'admin=disable'],
+    await Process.run(
+        'netsh', ['interface', 'set', 'interface', 'Nimbus', 'admin=disable'],
         runInShell: true);
     _bypass.clear();
     _lanBypass.clear();
+    _rangeRoutes.clear();
+    _tunActive = false;
   }
+
+  void _logLine(String line) => _logs.add(line);
 
   void _emit() {
     // Status is polled from WindowsEngine.instance.statusMap via controller.
