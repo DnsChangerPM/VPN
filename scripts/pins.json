@@ -1,0 +1,10 @@
+{
+  "aether": "v2.0.0",
+  "aether_repo": "https://github.com/CluvexStudio/Aether",
+  "hev_socks5_tunnel": "2.17.1",
+  "hev_repo": "https://github.com/heiher/hev-socks5-tunnel",
+  "tun2socks": "v2.6.0",
+  "wintun": "0.14.1",
+  "min_android_api": 24,
+  "min_windows": "6.3"
+}
