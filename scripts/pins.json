@@ -3,8 +3,17 @@
   "aether_repo": "https://github.com/CluvexStudio/Aether",
   "hev_socks5_tunnel": "2.17.1",
   "hev_repo": "https://github.com/heiher/hev-socks5-tunnel",
+  "hev_windows_asset": "hev-socks5-tunnel-win64.zip",
+  "hev_windows_runtime": "msys-2.0.dll",
   "tun2socks": "v2.6.0",
+  "tun2socks_repo": "https://github.com/xjasonlyu/tun2socks",
+  "tun2socks_windows_asset": "tun2socks-windows-amd64.zip",
+  "tun2socks_windows_reject": "tun2socks-windows-amd64-v3.zip",
+  "tun2socks_legacy": "v2.5.1",
+  "tun2socks_legacy_max_go": "1.20",
+  "tun2socks_legacy_reason": "last release built with Go 1.20; Go >= 1.21 requires Windows 10+",
   "wintun": "0.14.1",
   "min_android_api": 24,
-  "min_windows": "6.3"
+  "min_windows": "6.3",
+  "min_windows_for_current_tun2socks": "10.0"
 }

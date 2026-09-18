@@ -34,6 +34,13 @@ class VpnController extends ChangeNotifier {
   String? lanEndpoint;
   String? lanUser;
   String? lanPass;
+
+  /// Windows only: is this instance elevated, and which TUN bridge is carrying
+  /// the device VPN. Both feed the Diagnostics page and the "run as
+  /// Administrator" affordance, so the user can see *why* a full device VPN is
+  /// or is not up instead of guessing from one sentence.
+  bool elevated = false;
+  String windowsLabel = '';
   Timer? _updateTimer;
   Timer? _statsTimer;
   Timer? _clock;
@@ -64,6 +71,7 @@ class VpnController extends ChangeNotifier {
     _events = engine.events().listen(_onEvent, onError: (_) {});
     if (Platform.isWindows) {
       _winLogs = WindowsEngine.instance.logs.listen((line) => _log(line));
+      unawaited(_refreshWindowsFacts());
       // Self-heal: a run that ended hard (window closed, crash) cannot
       // clean up after itself, so it may leave the system proxy pointing at
       // our dead listener. Undo any leftover that is unambiguously ours.
@@ -200,8 +208,8 @@ class VpnController extends ChangeNotifier {
         }
       }
       if (settings.mode == ConnectionMode.vpn && Platform.isWindows) {
-        final admin = await engine.isElevated();
-        if (!admin) _log(s.needAdmin);
+        await _refreshWindowsFacts();
+        if (!elevated) _log('$needAdminText ($windowsLabel)');
       }
       final ladder = AetherLaunch.smartLadder(settings);
       var lastError = 'connect failed';
@@ -460,6 +468,43 @@ class VpnController extends ChangeNotifier {
       }
     });
     if (forceReconnect) _log('watchdog: reconnect scheduled in ${delay.inSeconds}s');
+  }
+
+  /// Elevation and OS build never change for a running process, but they are
+  /// only known after the first probe — and the UI shows them from the start.
+  Future<void> _refreshWindowsFacts() async {
+    if (!Platform.isWindows) return;
+    final win = WindowsEngine.instance;
+    elevated = await win.isAdmin();
+    windowsLabel = (await win.windowsBuild()).label;
+    notifyListeners();
+  }
+
+  /// Everything the Diagnostics page shows about the device VPN.
+  Map<String, String> get tunInfo {
+    if (!Platform.isWindows) return const {};
+    return WindowsEngine.instance.tunInfo();
+  }
+
+  /// True when a device VPN was asked for but this instance cannot deliver it
+  /// because it is not running as Administrator.
+  bool get needsElevation =>
+      Platform.isWindows &&
+      settings.mode == ConnectionMode.vpn &&
+      !elevated;
+
+  String get needAdminText => s.needAdmin;
+
+  /// One-tap UAC relaunch: closes this instance and reopens it elevated, so
+  /// "restart as Administrator" is not a four-step manual dance.
+  Future<void> restartAsAdmin() async {
+    if (!Platform.isWindows) return;
+    _log('restarting as Administrator…');
+    final ok = await WindowsEngine.instance.restartElevated();
+    if (!ok) {
+      toast = s.elevationRefused;
+      notifyListeners();
+    }
   }
 
   void log(String line) => _log(line);

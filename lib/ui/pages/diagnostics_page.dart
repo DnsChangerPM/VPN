@@ -1,7 +1,10 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app_info.dart';
+import '../../models/engine_state.dart';
 import '../../services/socks_probe.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/nimbus_theme.dart';
@@ -15,6 +18,8 @@ class DiagnosticsPage extends StatelessWidget {
     final c = controller;
     final s = c.s;
     final snap = c.snapshot;
+    final tun = c.tunInfo;
+    final tunBlocked = tun['error'] ?? '—';
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
@@ -48,6 +53,12 @@ class DiagnosticsPage extends StatelessWidget {
               child: Text(s.testConnection),
             ),
             OutlinedButton(onPressed: c.recover, child: Text(s.recover)),
+            if (c.needsElevation)
+              FilledButton.icon(
+                onPressed: c.restartAsAdmin,
+                icon: const Icon(Icons.shield_outlined),
+                label: Text(s.restartAsAdmin),
+              ),
             IconButton(
               onPressed: () {
                 Clipboard.setData(
@@ -62,11 +73,33 @@ class DiagnosticsPage extends StatelessWidget {
             ),
           ],
         ),
+        if (c.needsElevation) ...[
+          const SizedBox(height: 12),
+          _note(Icons.info_outline, s.deviceVpnHint),
+        ],
+        if (tunBlocked != '—' && tunBlocked.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _note(Icons.report_gmailerrorred_outlined,
+              '${s.tunBlocked}: $tunBlocked'),
+        ],
         const SizedBox(height: 12),
         _grid([
           _cell(s.protocol, snap.protocol.isEmpty ? '—' : snap.protocol),
           _cell(s.tunnel, snap.phase.name),
-          _cell(s.tun, snap.phase.name == 'connected' ? 'Nimbus' : '—'),
+          _cell(
+            Platform.isWindows ? s.tunAdapter : s.tun,
+            snap.phase == EnginePhase.connected
+                // Windows: the adapter name and index we really got ("Nimbus 2"
+                // happens), or '—' when only SOCKS5 is up. Android: VpnService.
+                ? (Platform.isWindows ? (tun['adapter'] ?? '—') : 'Nimbus')
+                : '—',
+          ),
+          // Windows-only facts: on Android the VpnService owns the device.
+          if (Platform.isWindows) ...[
+            _cell(s.tunBackend, tun['backend'] ?? '—'),
+            _cell(s.elevated, tun['elevated'] == 'true' ? s.yes : s.no),
+            _cell(s.windowsVersion, tun['windows'] ?? '—'),
+          ],
           _cell('MTU', '${c.settings.effectiveMtu}'),
           _cell(s.exitIp, snap.ip.isEmpty ? '—' : snap.ip),
           _cell(s.ping, snap.pingMs == null ? '—' : '${snap.pingMs} ms'),
@@ -117,6 +150,30 @@ class DiagnosticsPage extends StatelessWidget {
       mainAxisSpacing: 8,
       crossAxisSpacing: 8,
       children: cells,
+    );
+  }
+
+  Widget _note(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: NimbusColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: NimbusColors.line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: NimbusColors.cyan),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 12, height: 1.5),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

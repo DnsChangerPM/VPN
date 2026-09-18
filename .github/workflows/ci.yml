@@ -21,5 +21,139 @@ jobs:
           flutter-version: "3.27.4"
           channel: stable
       - run: flutter pub get
-      - run: flutter test
-      - run: flutter analyze
+      - name: Test
+        shell: bash
+        run: |
+          set -uo pipefail
+          flutter test 2>&1 | tee test.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Analyze
+        shell: bash
+        run: |
+          set -uo pipefail
+          flutter analyze 2>&1 | tee analyze.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Publish findings as check annotations
+        if: failure()
+        shell: bash
+        run: |
+          # Raw logs sit behind a signed-in browser session (and a CDN that
+          # scripts cannot always reach); check-run annotations are readable
+          # through the API, so a red build says *what* is red.
+          python3 - <<'PY'
+          import pathlib, re
+
+          def emit(level, text):
+              text = " ".join(text.split())[:400]
+              if text:
+                  print(f"::{level}::{text}")
+
+          analyze = pathlib.Path("analyze.txt")
+          if analyze.exists():
+              findings = [
+                  l for l in analyze.read_text(errors="replace").splitlines()
+                  if re.search(r" (error|warning|info) • ", l)
+              ]
+              for line in findings[:60]:
+                  emit("error", line)
+              summary = [
+                  l for l in analyze.read_text(errors="replace").splitlines()
+                  if re.match(r"^\s*(No issues|\d+ issues? found)", l)
+              ]
+              for line in summary[:2]:
+                  emit("error", line)
+
+          tests = pathlib.Path("test.txt")
+          if tests.exists():
+              body = tests.read_text(errors="replace").splitlines()
+              interesting = [
+                  l for l in body
+                  if re.search(r"(Some tests failed|failed to load|Expected:|Actual:|\[E\])", l, re.I)
+              ]
+              for line in interesting[:40]:
+                  emit("error", line)
+          PY
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          for f in scripts/*.sh; do
+            bash -n "$f" && echo "ok $f"
+          done
+      - name: Pins are valid and referenced
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, sys
+
+          pins = json.loads(pathlib.Path("scripts/pins.json").read_text())
+          script = pathlib.Path("scripts/fetch_cores.sh").read_text()
+
+          # Every pin the release build depends on must exist and be consumed by
+          # the fetch script — a pin nobody reads is a pin that silently drifts.
+          for key in ("aether", "hev_socks5_tunnel", "tun2socks",
+                      "tun2socks_legacy", "tun2socks_legacy_max_go", "wintun",
+                      "tun2socks_windows_asset", "hev_windows_asset"):
+              if not pins.get(key):
+                  sys.exit(f"pins.json is missing {key}")
+          for key in ("AETHER_TAG", "HEV_TAG", "TUN2SOCKS_TAG",
+                      "TUN2SOCKS_LEGACY_TAG", "WINTUN_URL"):
+              if key not in script:
+                  sys.exit(f"fetch_cores.sh no longer honours {key}")
+
+          # Only real download lines are inspected, so comments may keep naming
+          # the assets they warn about.
+          urls = [l for l in script.splitlines() if "releases/download/" in l]
+          if not urls:
+              sys.exit("fetch_cores.sh has no release download URLs")
+          if any("releases/latest" in l for l in script.splitlines()):
+              sys.exit("fetch_cores.sh must pin tags, not track 'latest'")
+          # GitHub lists the GOAMD64=v3 zip first: it dies with an illegal
+          # instruction on pre-AVX2 CPUs, i.e. most Windows 8.1 hardware.
+          if any("-v3.zip" in l for l in urls):
+              sys.exit("fetch_cores.sh downloads a GOAMD64=v3 asset")
+          for key in ("tun2socks_windows_asset", "hev_windows_asset"):
+              if not any(pins[key] in l for l in urls):
+                  sys.exit(f"fetch_cores.sh never downloads {pins[key]}")
+          # The legacy slot exists for Windows 8.1: without it the app has no
+          # bridge that can run there.
+          if "tun2socks-legacy.exe" not in script:
+              sys.exit("fetch_cores.sh no longer stages tun2socks-legacy.exe")
+          print("pins.json and fetch_cores.sh agree")
+          PY
+      - name: Pinned Windows sidecar assets exist
+        run: |
+          set -uo pipefail
+          # A renamed upstream asset means the release ships without a device
+          # VPN bridge. Verified through the API (no downloads); an unreachable
+          # API is a warning, a missing asset is an error.
+          assets() {
+            curl -fsSL -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$1/releases/tags/$2" \
+            | python3 -c "import json,sys;[print(a['name']) for a in json.load(sys.stdin).get('assets',[])]"
+          }
+          check() {
+            local repo="$1" tag="$2" want="$3"
+            local list
+            if ! list="$(assets "$repo" "$tag")"; then
+              echo "::warning::could not list $repo@$tag (rate limited?)"
+              return 0
+            fi
+            if grep -Fxq "$want" <<<"$list"; then
+              echo "ok $repo@$tag → $want"
+            else
+              echo "::error::$repo@$tag no longer publishes $want"
+              return 1
+            fi
+          }
+          # Tags come from pins.json so this check cannot drift from the build.
+          read -r T2S T2S_LEG HEV <<<"$(python3 -c 'import json; p = json.load(open("scripts/pins.json")); print(p["tun2socks"], p["tun2socks_legacy"], p["hev_socks5_tunnel"])')"
+          rc=0
+          check xjasonlyu/tun2socks "$T2S" tun2socks-windows-amd64.zip || rc=1
+          check xjasonlyu/tun2socks "$T2S_LEG" tun2socks-windows-amd64.zip || rc=1
+          check heiher/hev-socks5-tunnel "$HEV" hev-socks5-tunnel-win64.zip || rc=1
+          exit $rc

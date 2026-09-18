@@ -127,6 +127,18 @@ class ConnectPage extends StatelessWidget {
           textAlign: TextAlign.center,
           style: const TextStyle(color: NimbusColors.muted),
         ),
+        // Device VPN was asked for but this instance is not elevated: one tap
+        // does the UAC relaunch instead of leaving the user to find the exe,
+        // close the app and right-click it.
+        if (c.needsElevation)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: FilledButton.tonalIcon(
+              onPressed: c.restartAsAdmin,
+              icon: const Icon(Icons.shield_outlined, size: 18),
+              label: Text(s.restartAsAdmin),
+            ),
+          ),
         if (snap.connectedAt != null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
