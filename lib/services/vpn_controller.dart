@@ -17,6 +17,12 @@ import 'socks_probe.dart';
 import 'update_service.dart';
 import 'windows_proxy.dart';
 
+/// A gateway to redial: the peer address the core should use plus the protocol
+/// that produced it. A named shape (rather than an inline record) so that
+/// `_fallback ?? _lastExit` has a real type to unify to — two *different*
+/// record shapes would collapse to plain `Record` and lose their fields.
+typedef Dial = ({String endpoint, String protocol});
+
 class VpnController extends ChangeNotifier {
   VpnController();
 
@@ -60,12 +66,12 @@ class VpnController extends ChangeNotifier {
   int _exitTries = 0;
   final Map<String, int> _rejectedExits = {};
   DateTime? _exitSearchSince;
-  ({String endpoint, String protocol})? _fallback;
+  Dial? _fallback;
 
   /// "Connect with the Iran IP" was chosen while a search was still in flight.
   /// The running attempt is left alone (stopping it mid-dial would fight the
   /// engine); the next pass dials the gateway that already produced that exit.
-  ({String endpoint, String protocol})? _pendingDial;
+  Dial? _pendingDial;
 
   /// Set while the app is waiting for the user to answer the "keep looking or
   /// take the Iran IP?" question. The UI shows the dialog from this flag.
@@ -470,11 +476,14 @@ class VpnController extends ChangeNotifier {
           // The rule was switched off mid-search (usually by choosing "connect
           // with the Iran IP"): keep going, but now every exit is acceptable.
           if (outcome == AttemptOutcome.rejected) {
-            final fb = _pendingDial ?? _fallback ?? _lastExit;
+            final last = _lastExit;
+            final Dial? fb = _pendingDial ??
+                _fallback ??
+                (last == null
+                    ? null
+                    : (endpoint: last.endpoint, protocol: last.protocol));
             _pendingDial = null;
-            next = fb == null
-                ? null
-                : (endpoint: fb.endpoint, protocol: fb.protocol);
+            next = fb;
           }
           continue;
         }

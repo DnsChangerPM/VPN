@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
+// flutter_test re-exports its own EnginePhase (test binding lifecycle), which
+// would collide with the app's tunnel phase of the same name.
+import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:voidrauvpn/data/countries.dart';
 import 'package:voidrauvpn/models/engine_state.dart';
 import 'package:voidrauvpn/models/settings.dart';
