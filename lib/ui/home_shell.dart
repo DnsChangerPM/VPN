@@ -143,7 +143,7 @@ class _Drawer extends StatelessWidget {
                 size: 30,
                 onPressed: () => Links.openTelegram(),
               ),
-              title: Text(AppInfo.telegramHandle),
+              title: const Text(AppInfo.telegramHandle),
               subtitle: Text(s.telegram),
               onTap: () => Links.openTelegram(),
             ),

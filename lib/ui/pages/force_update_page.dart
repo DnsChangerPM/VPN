@@ -109,9 +109,9 @@ class ForceUpdatePage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      const Text(
                         AppInfo.telegramHandle,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 16),
                       ),
                       Text(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/countries.dart';
+import '../../l10n/strings.dart';
 import '../../models/engine_state.dart';
 import '../../models/settings.dart';
 import '../../services/links.dart';
