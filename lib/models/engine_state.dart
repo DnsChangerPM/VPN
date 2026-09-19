@@ -20,6 +20,7 @@ class EngineSnapshot {
     this.pingMs,
     this.location = '',
     this.ip = '',
+    this.country = '',
     this.connectedAt,
   });
 
