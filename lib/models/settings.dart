@@ -89,7 +89,7 @@ class VpnSettings {
     return v > cap ? cap : v;
   }
 
-  /// Aether itself always listens on loopback. LAN sharing is an authenticated
+  /// The tunnel core always listens on loopback. LAN sharing is an authenticated
   /// relay on Android and `--bind 0.0.0.0` on Windows.
   String get socksBind => '127.0.0.1:$socksPort';
 

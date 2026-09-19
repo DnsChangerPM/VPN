@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy Nimbus platform overlays onto a flutter create scaffold and patch SDK floors."""
+"""Copy VoidrauVPN platform overlays onto a flutter create scaffold and patch SDK floors."""
 from __future__ import annotations
 
 import re
@@ -84,18 +84,39 @@ def patch_android_gradle() -> None:
     text = re.sub(r"targetSdk\s*=\s*.+", "targetSdk = 35", text)
     text = re.sub(r"targetSdkVersion\s+.+", "targetSdkVersion 35", text)
 
-    # Ensure the applicationId is set. The apply_overlays AndroidManifest uses the
-    # ${applicationId} manifest placeholder and a ${applicationId}.files FileProvider
-    # authority, which breaks APK signing/build without an explicit applicationId.
+    # The Android identity is intentionally frozen at the id the app shipped
+    # with: a rebranded APK with a new applicationId would install *next to*
+    # the old app instead of upgrading it, and the in-app updater (which
+    # verifies the signing certificate of the installed app) would break.
+    # The namespace stays on the overlay's Kotlin package so the manifest can
+    # keep using relative component names.
+    legacy_application_id = "pm.dnschanger.nimbus"
+    legacy_namespace = "pm.dnschanger.nimbus"
+    text = re.sub(r"applicationId\s*=?\s*\"[^\"]*\"",
+                  f'applicationId = "{legacy_application_id}"', text)
+    text = re.sub(r"applicationId\s+\"[^\"]*\"",
+                  f'applicationId = "{legacy_application_id}"', text)
     if "applicationId" not in text:
         if path.suffix == ".kts":
             text = _ensure_extra(
                 text,
                 "applicationId",
-                '    applicationId = "pm.dnschanger.nimbus"',
+                f'    applicationId = "{legacy_application_id}"',
             )
         else:
-            text = _ensure_extra(text, "applicationId", '    applicationId "pm.dnschanger.nimbus"')
+            text = _ensure_extra(
+                text, "applicationId", f'    applicationId "{legacy_application_id}"')
+    text = re.sub(r"namespace\s*=?\s*\"[^\"]*\"",
+                  f'namespace = "{legacy_namespace}"', text)
+
+    # `flutter create` scaffolds its own MainActivity in the project-name
+    # package; the overlay below installs the real one (with the engine plugin)
+    # in the frozen package, so drop the scaffold's copy.
+    scaffold_pkg = ROOT / "android" / "app" / "src" / "main" / "kotlin" / "pm" / "dnschanger" / "voidrauvpn"
+    if scaffold_pkg.exists():
+        for stale in scaffold_pkg.glob("*.kt"):
+            stale.unlink()
+            print("removed scaffold", stale.relative_to(ROOT))
 
     # Ensure NDK abiFilters (inside defaultConfig, the documented location).
     # `flutter build apk --split-per-abi` passes -Psplit-per-abi=true, which makes
@@ -139,6 +160,8 @@ def patch_android_gradle() -> None:
         text = _ensure_groovy_packaging(text)
 
     # Signing config for KTS
+    # NOTE: the keystore alias default ("nimbus") is deliberately unchanged —
+    # renaming it would change the release signature and break in-place updates.
     signing_kts = '''
     val store = System.getenv("ANDROID_KEYSTORE_PATH")
     if (!store.isNullOrBlank()) {
@@ -146,6 +169,8 @@ def patch_android_gradle() -> None:
             create("release") {
                 storeFile = file(store)
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                // Historical default alias: an alias rename would invalidate
+                // the release signature and break in-place updates.
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "nimbus"
                 keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: ""
             }
@@ -241,8 +266,11 @@ def patch_windows() -> None:
         t = main_cpp.read_text(encoding="utf-8")
         t = t.replace("Win32Window::Size size(1280, 720);", "Win32Window::Size size(420, 780);")
         t = t.replace("Win32Window::Size size(1280, 720)", "Win32Window::Size size(420, 780)")
+        # The scaffold titles the window after the project name; the product
+        # name is what belongs in the title bar and the taskbar.
+        t = re.sub(r'window\.Create\(L"[^"]*"', 'window.Create(L"VoidrauVPN"', t)
         main_cpp.write_text(t, encoding="utf-8")
-        print("patched window size")
+        print("patched window size and title")
 
     manifest = ROOT / "windows" / "runner" / "runner.exe.manifest"
     if manifest.exists():
@@ -280,12 +308,12 @@ def patch_windows() -> None:
         # Keep original minimum to avoid breaking
 
         extra = """
-file(GLOB NIMBUS_SIDECARS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/windows/*")
-if(NIMBUS_SIDECARS)
-  install(FILES ${NIMBUS_SIDECARS} DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+file(GLOB VOIDRAU_SIDECARS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/windows/*")
+if(VOIDRAU_SIDECARS)
+  install(FILES ${VOIDRAU_SIDECARS} DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
 endif()
 """
-        if "NIMBUS_SIDECARS" not in t:
+        if "VOIDRAU_SIDECARS" not in t:
             t += "\n" + extra
         cmake.write_text(t, encoding="utf-8")
         print("patched windows CMakeLists")

@@ -2,14 +2,12 @@ import 'dart:io' show Platform;
 
 import '../models/settings.dart';
 
-/// Builds the Aether core launch configuration.
+/// Builds the tunnel-core launch configuration.
 ///
-/// Following the reference client (hamvex/AetherGUI), the core is driven
-/// **only through environment variables** and never through CLI flags. Every
-/// documented flag has an env twin (see CluvexStudio/Aether Docs →
-/// "Environment variables"), env is what the reference GUI validates against,
-/// and env-only keeps Android/Windows behaviour identical.
-class AetherLaunch {
+/// The core is driven **only through environment variables** and never through
+/// CLI flags; that is its documented configuration contract, and env-only
+/// keeps the Android and Windows launchers behaviourally identical.
+class CoreLaunch {
   static const coreVersion = '2.0.0';
 
   /// Obfuscation profile given to the core. The core accepts
@@ -33,10 +31,10 @@ class AetherLaunch {
     return p == Protocol.smart ? Protocol.masque : p;
   }
 
-  /// The environment the core runs with. Mirrors
-  /// AetherGUI `Settings::environment()`:
+  /// The environment the core runs with:
   ///   AETHER_PROTOCOL / SCAN / IP / NOIZE / SOCKS / CONFIG / QUICK_RECONNECT /
   ///   LOG_LEVEL, then transport-specific keys, then the optional peer.
+  /// (The `AETHER_*` names are the core's own interface and must stay.)
   static Map<String, String> environment(
     VpnSettings settings, {
     Protocol? override,

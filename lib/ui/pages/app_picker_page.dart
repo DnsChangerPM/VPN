@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/vpn_controller.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
 
 class AppPickerPage extends StatefulWidget {
   const AppPickerPage({super.key, required this.controller});
@@ -54,7 +54,7 @@ class _AppPickerPageState extends State<AppPickerPage> {
                 hintText: s.searchApps,
                 prefixIcon: const Icon(Icons.search),
                 filled: true,
-                fillColor: NimbusColors.surface,
+                fillColor: VoidrauColors.surface,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               onChanged: (v) => setState(() => query = v),
@@ -90,7 +90,7 @@ class _AppPickerPageState extends State<AppPickerPage> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text('${selected.length} ${s.selected}',
-                  style: const TextStyle(color: NimbusColors.muted)),
+                  style: const TextStyle(color: VoidrauColors.muted)),
             ),
           ),
           Expanded(

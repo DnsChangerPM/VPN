@@ -16,7 +16,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Authenticated SOCKS5 on the LAN that relays to Aether on loopback.
+ * Authenticated SOCKS5 on the LAN that relays to the tunnel core on
+ * loopback.
  * Matches Aethon: the core stays on 127.0.0.1 without auth.
  */
 class LanProxyServer {
@@ -45,7 +46,7 @@ class LanProxyServer {
             val socket = ServerSocket(requestedPort, 16, local)
             this.upstreamHost = upstreamHost
             this.upstreamPort = upstreamPort
-            username = "nimbus-" + hex(4)
+            username = "voidrau-" + hex(4)
             password = hex(16)
             server = socket
             address = local.hostAddress ?: ""
@@ -205,7 +206,7 @@ class LanProxyServer {
     }
 
     companion object {
-        private const val TAG = "NimbusLan"
+        private const val TAG = "VoidrauLan"
         private const val MAX_CLIENTS = 24
         private const val RELAY = 300_000
         private const val HANDSHAKE = 10_000

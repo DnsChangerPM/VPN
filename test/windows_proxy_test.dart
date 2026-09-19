@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nimbus/services/windows_proxy.dart';
+import 'package:voidrauvpn/services/windows_proxy.dart';
 
 void main() {
   group('parseRegQuery', () {

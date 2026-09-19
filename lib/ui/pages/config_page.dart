@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/settings.dart';
 import '../../services/vpn_controller.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
 import 'app_picker_page.dart';
 
 class ConfigPage extends StatelessWidget {
@@ -89,7 +89,7 @@ class ConfigPage extends StatelessWidget {
           decoration: InputDecoration(
             hintText: 'Automatic',
             filled: true,
-            fillColor: NimbusColors.surface,
+            fillColor: VoidrauColors.surface,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
           onChanged: (v) => st.endpoint = v,
@@ -149,7 +149,7 @@ class ConfigPage extends StatelessWidget {
           },
         ),
         _label(s.splitTitle),
-        Text(s.splitHelp, style: const TextStyle(color: NimbusColors.muted, fontSize: 12)),
+        Text(s.splitHelp, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
         const SizedBox(height: 8),
         _seg(st.splitMode.name, {
           'off': s.splitOff,
@@ -178,7 +178,7 @@ class ConfigPage extends StatelessWidget {
               c.lanEndpoint == null
                   ? '${s.lanAddress}: ${st.socksBind} → LAN ${st.socksPort + 1}'
                   : '${s.lanAddress}: ${c.lanEndpoint}\n${s.lanUser}: ${c.lanUser}\n${s.lanPass}: ${c.lanPass}',
-              style: const TextStyle(color: NimbusColors.muted, height: 1.4),
+              style: const TextStyle(color: VoidrauColors.muted, height: 1.4),
             ),
           ),
         SwitchListTile(
@@ -218,7 +218,7 @@ class ConfigPage extends StatelessWidget {
           onFieldSubmitted: (_) => c.persist(),
           decoration: InputDecoration(
             filled: true,
-            fillColor: NimbusColors.surface,
+            fillColor: VoidrauColors.surface,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
         ),
@@ -230,7 +230,7 @@ class ConfigPage extends StatelessWidget {
           onFieldSubmitted: (_) => c.persist(),
           decoration: InputDecoration(
             filled: true,
-            fillColor: NimbusColors.surface,
+            fillColor: VoidrauColors.surface,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
         ),
@@ -242,7 +242,7 @@ class ConfigPage extends StatelessWidget {
           onFieldSubmitted: (_) => c.persist(),
           decoration: InputDecoration(
             filled: true,
-            fillColor: NimbusColors.surface,
+            fillColor: VoidrauColors.surface,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             helperText: 'effective ${st.effectiveMtu}',
           ),
@@ -266,7 +266,7 @@ class ConfigPage extends StatelessWidget {
           onFieldSubmitted: (_) => c.persist(),
           decoration: InputDecoration(
             filled: true,
-            fillColor: NimbusColors.surface,
+            fillColor: VoidrauColors.surface,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
         ),
@@ -287,7 +287,7 @@ class ConfigPage extends StatelessWidget {
 
   Widget _label(String t) => Padding(
         padding: const EdgeInsets.only(top: 18, bottom: 8),
-        child: Text(t, style: const TextStyle(color: NimbusColors.muted, fontSize: 13)),
+        child: Text(t, style: const TextStyle(color: VoidrauColors.muted, fontSize: 13)),
       );
 
   Widget _seg(
@@ -326,7 +326,7 @@ class ConfigPage extends StatelessWidget {
       },
       decoration: InputDecoration(
         filled: true,
-        fillColor: NimbusColors.surface,
+        fillColor: VoidrauColors.surface,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );

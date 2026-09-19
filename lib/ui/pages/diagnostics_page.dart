@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app_info.dart';
+import '../../data/countries.dart';
 import '../../models/engine_state.dart';
 import '../../services/socks_probe.dart';
 import '../../services/vpn_controller.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
 
 class DiagnosticsPage extends StatelessWidget {
   const DiagnosticsPage({super.key, required this.controller});
@@ -89,9 +90,11 @@ class DiagnosticsPage extends StatelessWidget {
           _cell(
             Platform.isWindows ? s.tunAdapter : s.tun,
             snap.phase == EnginePhase.connected
-                // Windows: the adapter name and index we really got ("Nimbus 2"
+                // Windows: the adapter name and index we really got ("Voidrau 2"
                 // happens), or '—' when only SOCKS5 is up. Android: VpnService.
-                ? (Platform.isWindows ? (tun['adapter'] ?? '—') : 'Nimbus')
+                ? (Platform.isWindows
+                    ? (tun['adapter'] ?? '—')
+                    : s.appName)
                 : '—',
           ),
           // Windows-only facts: on Android the VpnService owns the device.
@@ -102,9 +105,15 @@ class DiagnosticsPage extends StatelessWidget {
           ],
           _cell('MTU', '${c.settings.effectiveMtu}'),
           _cell(s.exitIp, snap.ip.isEmpty ? '—' : snap.ip),
+          _cell(
+            s.exitCountry,
+            snap.country.isEmpty
+                ? '—'
+                : '${countryLabel(snap.country, fa: s.isFa)} (${snap.country.toUpperCase()})',
+          ),
           _cell(s.ping, snap.pingMs == null ? '—' : '${snap.pingMs} ms'),
           _cell(s.location, snap.location.isEmpty ? '—' : snap.location),
-          _cell(s.coreVersion, 'Aether ${AppInfo.core}'),
+          _cell(s.coreVersion, AppInfo.core),
           _cell('SOCKS5', c.settings.socksBind),
           _cell(s.download, '${snap.downloadBytes}'),
           _cell(s.upload, '${snap.uploadBytes}'),
@@ -119,7 +128,7 @@ class DiagnosticsPage extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.black.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: NimbusColors.line),
+            border: Border.all(color: VoidrauColors.line),
           ),
           child: ListView.builder(
             itemCount: c.logs.length,
@@ -157,14 +166,14 @@ class DiagnosticsPage extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: NimbusColors.surface,
+        color: VoidrauColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: NimbusColors.line),
+        border: Border.all(color: VoidrauColors.line),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: NimbusColors.cyan),
+          Icon(icon, size: 18, color: VoidrauColors.cyan),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -181,15 +190,15 @@ class DiagnosticsPage extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: NimbusColors.surface,
+        color: VoidrauColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: NimbusColors.line),
+        border: Border.all(color: VoidrauColors.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(k, style: const TextStyle(color: NimbusColors.muted, fontSize: 11)),
+          Text(k, style: const TextStyle(color: VoidrauColors.muted, fontSize: 11)),
           const SizedBox(height: 4),
           Text(v,
               maxLines: 1,

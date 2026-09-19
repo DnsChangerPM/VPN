@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import '../../app_info.dart';
 import '../../models/settings.dart';
-import '../../services/update_service.dart';
+import '../../services/links.dart';
 import '../../services/vpn_controller.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
+import '../widgets/telegram_button.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.controller});
@@ -31,7 +32,7 @@ class SettingsPage extends StatelessWidget {
         }),
         Padding(
           padding: const EdgeInsets.only(top: 18, bottom: 8),
-          child: Text(s.language, style: const TextStyle(color: NimbusColors.muted)),
+          child: Text(s.language, style: const TextStyle(color: VoidrauColors.muted)),
         ),
         _seg(st.language.name, const {
           'system': 'System',
@@ -43,7 +44,7 @@ class SettingsPage extends StatelessWidget {
         }),
         Padding(
           padding: const EdgeInsets.only(top: 18, bottom: 8),
-          child: Text(s.orbStyle, style: const TextStyle(color: NimbusColors.muted)),
+          child: Text(s.orbStyle, style: const TextStyle(color: VoidrauColors.muted)),
         ),
         _seg(st.orbStyle.name, {
           'classic': s.orbClassic,
@@ -92,11 +93,11 @@ class SettingsPage extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Text(s.qsTile, style: const TextStyle(color: NimbusColors.muted, fontSize: 12)),
+          child: Text(s.qsTile, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
         ),
         ListTile(
           title: Text(s.currentVersion),
-          trailing: Text(u?.current ?? '1.0.0'),
+          trailing: Text(u?.current ?? AppInfo.version),
         ),
         ListTile(
           title: Text(s.latestVersion),
@@ -106,7 +107,7 @@ class SettingsPage extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(s.updateAvailable,
-                style: const TextStyle(color: NimbusColors.cyan)),
+                style: const TextStyle(color: VoidrauColors.cyan)),
           ),
         if (u?.notes.isNotEmpty == true)
           Container(
@@ -114,20 +115,24 @@ class SettingsPage extends StatelessWidget {
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: NimbusColors.surface,
+              color: VoidrauColors.surface,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: NimbusColors.line),
+              border: Border.all(color: VoidrauColors.line),
             ),
             child: Text(u!.notes, style: const TextStyle(fontSize: 13, height: 1.4)),
           ),
         FilledButton(
           onPressed: () async {
-            await c.refreshUpdate();
+            await c.refreshUpdate(force: true);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    c.update?.available == true ? s.updateAvailable : s.upToDate,
+                    c.releaseCheckFailed
+                        ? s.updateFailed
+                        : (c.update?.available == true
+                            ? s.updateAvailable
+                            : s.upToDate),
                   ),
                 ),
               );
@@ -146,12 +151,20 @@ class SettingsPage extends StatelessWidget {
             onPressed: c.downloadUpdate,
             child: Text(c.downloading ? s.downloading : s.downloadUpdate),
           ),
-        TextButton(
-          onPressed: () => launchUrl(
-            Uri.parse(u?.htmlUrl ?? UpdateService.githubHtml),
-            mode: LaunchMode.externalApplication,
+        TextButton.icon(
+          onPressed: () => Links.openReleases(),
+          icon: const Icon(Icons.open_in_new, size: 16),
+          label: Text(s.openRelease),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: TelegramButton(
+            size: 30,
+            onPressed: () => Links.openTelegram(),
           ),
-          child: Text(s.openRelease),
+          title: Text('${s.aboutChannel} · ${AppInfo.telegramHandle}'),
+          subtitle: Text(s.aboutChannelCredit),
+          onTap: () => Links.openTelegram(),
         ),
       ],
     );

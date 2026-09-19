@@ -3,7 +3,7 @@ class S {
   final String languageCode;
   bool get isFa => languageCode == 'fa';
 
-  String get appName => 'Nimbus VPN';
+  String get appName => 'VoidrauVPN';
   String get brandSubtitle => isFa ? 'شبکه خصوصی' : 'Private network';
   String get navConnect => isFa ? 'اتصال' : 'Connect';
   String get navConfig => isFa ? 'پیکربندی' : 'Configurations';
@@ -71,17 +71,18 @@ class S {
   String get updates => isFa ? 'به‌روزرسانی' : 'Updates';
   String get autoUpdates => isFa ? 'بررسی خودکار' : 'Automatic checks';
   String get autoUpdatesHelp => isFa
-      ? 'هر بار اجرا و هر ۱۲ ساعت از GitHub Releases'
-      : 'On launch and every 12 hours from GitHub Releases';
+      ? 'هنگام اجرا، بازگشت به برنامه و پیش از هر اتصال بررسی می‌شود'
+      : 'Checked on launch, on resume and before every connection';
   String get currentVersion => isFa ? 'نسخه فعلی' : 'Current version';
   String get latestVersion => isFa ? 'آخرین نسخه' : 'Latest version';
   String get checkUpdates => isFa ? 'بررسی به‌روزرسانی' : 'Check for updates';
   String get downloadUpdate => isFa ? 'دانلود به‌روزرسانی' : 'Download update';
-  String get openRelease => isFa ? 'مشاهده در GitHub' : 'Open GitHub release';
+  String get openRelease => isFa ? 'مشاهده در گیت‌هاب' : 'Open GitHub release';
   String get upToDate => isFa ? 'برنامه به‌روز است' : 'You are up to date';
   String get updateAvailable => isFa ? 'نسخه جدید آماده است' : 'Update available';
   String get updateFailed => isFa ? 'بررسی ناموفق بود' : 'Update check failed';
   String get checking => isFa ? 'در حال بررسی…' : 'Checking…';
+  String get updateChannel => isFa ? 'کانال انتشار نسخه‌ها' : 'Release channel';
 
   String get logs => isFa ? 'گزارش زنده' : 'Live log';
   String get clearLogs => isFa ? 'پاک کردن' : 'Clear';
@@ -90,15 +91,21 @@ class S {
   String get recover => isFa ? 'بازیابی شبکه' : 'Recover network';
 
   String get aboutTitle => isFa ? 'درباره' : 'About';
-  String get aboutCore => isFa ? 'هسته: Aether' : 'Core: Aether';
+  String get aboutCore => isFa ? 'هسته تونل' : 'Tunnel core';
   String get aboutCoreCredit => isFa
-      ? 'موتور شبکه رسمی CluvexStudio/Aether — MASQUE، WireGuard، gool و MASQUE×2.'
-      : 'Official CluvexStudio/Aether engine — MASQUE, WireGuard, gool and MASQUE×2.';
-  String get aboutApp => isFa ? 'برنامه: Nimbus VPN' : 'Application: Nimbus VPN';
+      ? 'موتور داخلی برنامه — MASQUE، WireGuard، gool و MASQUE×2.'
+      : 'The engine built into the app — MASQUE, WireGuard, gool and MASQUE×2.';
+  String get aboutApp => isFa ? 'برنامه: VoidrauVPN' : 'Application: VoidrauVPN';
   String get aboutAppCredit => isFa
-      ? 'کلاینت مستقل فلاتر برای ویندوز ۸.۱ تا ۱۱ و اندروید ۷ به بالا. الهام‌گرفته از AetherGUI.'
-      : 'Independent Flutter client for Windows 8.1–11 and Android 7+. Inspired by AetherGUI.';
-  String get telegram => 'Telegram';
+      ? 'کلاینت فلاتر برای ویندوز ۸.۱ تا ۱۱ و اندروید ۷ به بالا.'
+      : 'Flutter client for Windows 8.1–11 and Android 7+.';
+  String get aboutChannel => isFa ? 'کانال تلگرام' : 'Telegram channel';
+  String get aboutChannelCredit => isFa
+      ? 'نسخه‌های جدید، توضیحات انتشار و پشتیبانی در کانال تلگرام منتشر می‌شود.'
+      : 'New versions, release notes and support are posted on the Telegram channel.';
+  String get telegram => isFa ? 'کانال تلگرام' : 'Telegram channel';
+  String get telegramShort => 'Telegram';
+  String get openTelegram => isFa ? 'باز کردن کانال تلگرام' : 'Open Telegram channel';
   String get reset => isFa ? 'بازنشانی پیش‌فرض' : 'Reset defaults';
   String get apply => isFa ? 'اعمال' : 'Apply';
   String socksHint(int port) => isFa
@@ -117,7 +124,7 @@ class S {
       : 'System-wide Windows VPN needs Administrator rights';
   String get deviceVpnHint => isFa
       ? 'برای VPN دستگاه (عبور همه برنامه‌ها از تونل)، برنامه باید Administrator باشد'
-      : 'A device VPN (every app through the tunnel) needs Nimbus to run as Administrator';
+      : 'A device VPN (every app through the tunnel) needs VoidrauVPN to run as Administrator';
   String get restartAsAdmin => isFa
       ? 'اجرا به‌صورت Administrator'
       : 'Run as Administrator';
@@ -144,7 +151,11 @@ class S {
   String get copied => isFa ? 'کپی شد' : 'Copied';
   String get tun => isFa ? 'رابط TUN' : 'TUN interface';
   String get exitIp => isFa ? 'آی‌پی خروجی' : 'Exit IP';
-  String get coreVersion => isFa ? 'هسته Aether' : 'Aether core';
+  String get exitCountry => isFa ? 'کشور خروجی' : 'Exit country';
+  String get tunnelIp => isFa ? 'آی‌پی تونل' : 'VPN IP';
+  String get ipCopied => isFa ? 'آی‌پی کپی شد' : 'IP copied';
+  String get copyIp => isFa ? 'کپی آی‌پی' : 'Copy IP';
+  String get coreVersion => isFa ? 'هسته تونل' : 'Tunnel core';
   String get tunnel => isFa ? 'تونل' : 'Tunnel';
   String get refresh => isFa ? 'نوسازی' : 'Refresh';
   String get downloading => isFa ? 'در حال دانلود…' : 'Downloading…';
@@ -154,7 +165,7 @@ class S {
   String get lanAddress => isFa ? 'آدرس اشتراک LAN' : 'LAN listen address';
   String get battery => isFa ? 'بهینه‌سازی باتری' : 'Battery optimization';
   String get batteryHelp => isFa
-      ? 'برای اتصال پایدار، بهینه‌سازی باتری را برای Nimbus خاموش کنید'
+      ? 'برای اتصال پایدار، بهینه‌سازی باتری را برای VoidrauVPN خاموش کنید'
       : 'Disable battery optimization so the tunnel can stay up';
   String get vpnSettings => isFa ? 'تنظیمات VPN سیستم' : 'System VPN settings';
   String get scanTurbo => isFa ? 'سریع' : 'Turbo';
@@ -186,4 +197,39 @@ class S {
   String get qsTile => isFa
       ? 'کاشی تنظیمات سریع و ویجت صفحه اصلی را از لانچر اضافه کنید'
       : 'Add the Quick Settings tile and home widget from your launcher';
+
+  // ── forced update ──────────────────────────────────────────────────────────
+  String get updateRequiredTitle => isFa
+      ? 'نسخه جدید منتشر شده است'
+      : 'A new version is out';
+  String get updateRequiredHeadline => isFa
+      ? 'این نسخه غیرفعال شده است'
+      : 'This version has been disabled';
+  String get updateRequiredBody => isFa
+      ? 'به‌محض انتشار نسخه جدید، نسخه‌های قبلی از کار می‌افتند. برای ادامه استفاده، نسخه جدید VoidrauVPN را نصب کنید.'
+      : 'As soon as a new release is published, older versions stop working. Install the new VoidrauVPN build to keep using it.';
+  String get updateRequiredTelegramLead => isFa
+      ? 'فایل نصبی و توضیحات کامل نسخه جدید در کانال تلگرام منتشر می‌شود:'
+      : 'The installer and the full release notes are published on the Telegram channel:';
+  String get updateStep1 => isFa
+      ? 'وارد کانال تلگرام شوید'
+      : 'Open the Telegram channel';
+  String get updateStep2 => isFa
+      ? 'آخرین نسخه VoidrauVPN را از کانال دانلود کنید'
+      : 'Download the latest VoidrauVPN build from the channel';
+  String get updateStep3 => isFa
+      ? 'فایل را نصب کنید و برنامه را دوباره باز کنید'
+      : 'Install it and reopen the app';
+  String get releaseNotes => isFa ? 'توضیحات نسخه' : 'Release notes';
+  String get checkAgain => isFa ? 'بررسی مجدد' : 'Check again';
+  String get updatedToContinue => isFa
+      ? 'پس از نصب نسخه جدید، اتصال دوباره فعال می‌شود'
+      : 'Connecting is re-enabled once the new version is installed';
+  String get directDownload => isFa
+      ? 'دانلود مستقیم نسخه جدید'
+      : 'Download the new version directly';
+  String get downloadFromChannel => isFa
+      ? 'نصب از کانال تلگرام'
+      : 'Install from the Telegram channel';
+  String get versionOutdated => isFa ? 'نسخه قدیمی' : 'Outdated version';
 }

@@ -20,6 +20,7 @@ class EngineSnapshot {
     this.pingMs,
     this.location = '',
     this.ip = '',
+    this.country = '',
     this.connectedAt,
   });
 
@@ -31,7 +32,13 @@ class EngineSnapshot {
   final int uploadBytes;
   final int? pingMs;
   final String location;
+
+  /// Public IP of the tunnel exit — the IP a website sees while connected.
   final String ip;
+
+  /// ISO-3166 alpha-2 code of [ip], used to draw the exit country flag.
+  final String country;
+
   final DateTime? connectedAt;
 
   bool get isActive =>
@@ -56,6 +63,7 @@ class EngineSnapshot {
     int? pingMs,
     String? location,
     String? ip,
+    String? country,
     DateTime? connectedAt,
     bool clearConnectedAt = false,
   }) {
@@ -69,6 +77,7 @@ class EngineSnapshot {
       pingMs: pingMs ?? this.pingMs,
       location: location ?? this.location,
       ip: ip ?? this.ip,
+      country: country ?? this.country,
       connectedAt:
           clearConnectedAt ? null : (connectedAt ?? this.connectedAt),
     );
@@ -92,6 +101,7 @@ class UpdateInfo {
     this.exeSha256,
     this.htmlUrl,
     this.available = false,
+    this.checkFailed = false,
   });
 
   final String current;
@@ -103,6 +113,10 @@ class UpdateInfo {
   final String? exeSha256;
   final String? htmlUrl;
   final bool available;
+
+  /// True when the release feed could not be reached. A failed check never
+  /// un-blocks an app that already knows it is outdated.
+  final bool checkFailed;
 
   String? get platformUrl {
     // Resolved by callers that know the OS.

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../app_info.dart';
+import '../../services/links.dart';
 import '../../services/vpn_controller.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
+import '../widgets/telegram_button.dart';
 
+/// About screen: the app, its release repository and the official Telegram
+/// channel. Nothing else — no third-party projects are advertised here.
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key, required this.controller});
   final VpnController controller;
@@ -25,46 +28,87 @@ class AboutPage extends StatelessWidget {
               const SizedBox(height: 12),
               Text(s.appName, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
               Text(
-                'v${controller.update?.current ?? AppInfo.version} · Aether ${AppInfo.core}',
-                style: const TextStyle(color: NimbusColors.muted),
+                'v${controller.update?.current ?? AppInfo.version} · ${s.aboutCore} ${AppInfo.core}',
+                style: const TextStyle(color: VoidrauColors.muted),
               ),
               const SizedBox(height: 8),
               Text(s.freeNote,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: NimbusColors.muted)),
+                  style: const TextStyle(color: VoidrauColors.muted)),
             ],
           ),
         ),
         const SizedBox(height: 28),
-        Text(s.aboutCore, style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 6),
-        Text(s.aboutCoreCredit, style: const TextStyle(color: NimbusColors.muted, height: 1.45)),
-        TextButton(
-          onPressed: () => launchUrl(
-            Uri.parse('https://github.com/CluvexStudio/Aether'),
-            mode: LaunchMode.externalApplication,
-          ),
-          child: const Text('github.com/CluvexStudio/Aether'),
-        ),
-        const SizedBox(height: 16),
+
+        // ── the application ──
         Text(s.aboutApp, style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-        Text(s.aboutAppCredit, style: const TextStyle(color: NimbusColors.muted, height: 1.45)),
-        TextButton(
-          onPressed: () => launchUrl(
-            Uri.parse('https://github.com/DnsChangerPM/VPN'),
-            mode: LaunchMode.externalApplication,
-          ),
-          child: const Text('github.com/DnsChangerPM/VPN'),
+        Text(s.aboutAppCredit,
+            style: const TextStyle(color: VoidrauColors.muted, height: 1.45)),
+        const SizedBox(height: 4),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.code, color: VoidrauColors.cyan),
+          title: Text(AppInfo.repoUrl.replaceFirst('https://', '')),
+          onTap: () => Links.openRepo(),
+          trailing: const Icon(Icons.open_in_new, size: 16),
         ),
-        TextButton(
-          onPressed: () => launchUrl(
-            Uri.parse('https://github.com/hamvex/AetherGUI'),
-            mode: LaunchMode.externalApplication,
-          ),
-          child: const Text('Inspired by hamvex/AetherGUI'),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.sell_outlined, color: VoidrauColors.cyan),
+          title: Text('${s.updates} — ${s.openRelease}'),
+          subtitle: const Text('${AppInfo.repo}/releases'),
+          onTap: () => Links.openReleases(),
+          trailing: const Icon(Icons.open_in_new, size: 16),
+        ),
+        const Divider(height: 28),
+
+        // ── the official channel ──
+        Text(s.aboutChannel, style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        Text(s.aboutChannelCredit,
+            style: const TextStyle(color: VoidrauColors.muted, height: 1.45)),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: TelegramButton(size: 32, onPressed: () => Links.openTelegram()),
+          title: const Text(AppInfo.telegramHandle,
+              style: TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text(AppInfo.telegramUrl.replaceFirst('https://', '')),
+          onTap: () => Links.openTelegram(),
+          trailing: const Icon(Icons.open_in_new, size: 16),
+        ),
+        const Divider(height: 28),
+
+        // ── the tunnel core ──
+        Text(s.aboutCore, style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        Text(s.aboutCoreCredit,
+            style: const TextStyle(color: VoidrauColors.muted, height: 1.45)),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _chip('${s.coreVersion} v${AppInfo.core}'),
+            _chip('Android 7+'),
+            _chip('Windows 8.1+'),
+            _chip('MIT'),
+          ],
         ),
       ],
+    );
+  }
+
+  Widget _chip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: VoidrauColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: VoidrauColors.line),
+      ),
+      child: Text(text,
+          style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
     );
   }
 }

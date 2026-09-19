@@ -1,10 +1,8 @@
-# Nimbus VPN
+# VoidrauVPN
 
-Independent **Flutter** client for the official [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) core.
+Free, open-source **Flutter** VPN client for **Android 7+** and **Windows 8.1–11** — device-wide VPN or a local SOCKS5 proxy, powered by a modern multi-protocol tunnel core.
 
-The UI and feature set follow [hamvex/AetherGUI](https://github.com/hamvex/AetherGUI) (Aethon): device VPN or local SOCKS5, Smart Connect, MASQUE HTTP/3 & HTTP/2, WireGuard, gool, MASQUE×2, scan modes, obfuscation, split tunneling, diagnostics, Persian/English, and GitHub Releases update checks.
-
-Nimbus is **not** affiliated with CluvexStudio. Aether is a separate project with its own license and trademark.
+Telegram channel (releases, install files, notes and support): **[t.me/Voidrau](https://t.me/Voidrau)**
 
 [English](#english) · [فارسی](#فارسی)
 
@@ -17,126 +15,131 @@ Nimbus is **not** affiliated with CluvexStudio. Aether is a separate project wit
 | | Android | Windows |
 | --- | --- | --- |
 | UI | Flutter | Flutter (compact 420×780 window) |
-| Core | Aether **v2.0.0** `libaether.so` | Aether **v2.0.0** `aether.exe` |
-| Device VPN | `VpnService` + [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) 2.17.1 | WinTUN + tun2socks **or** hev-socks5-tunnel (Administrator) |
-| Proxy | SOCKS5 `127.0.0.1:1819` (configurable) | SOCKS5 `127.0.0.1:1819` (configurable) + system proxy auto on/off |
-| Extras | QS tile, home widget, bypass LAN, MTU/keepalive/watchdog | Bypass LAN routes, keepalive, MTU, watchdog |
-| Minimum OS | **Android 7.0** (API 24) | **Windows 8.1** (6.3) through 11, x64 |
-| Updates | GitHub Releases API | GitHub Releases API |
+| Device VPN | `VpnService` + userspace TUN bridge | WinTUN adapter + one of three staged bridges |
+| Proxy | SOCKS5 `127.0.0.1:1819` (configurable) | SOCKS5 `127.0.0.1:1819` (configurable) + system-proxy automation |
+| Protocols | Smart Connect: MASQUE HTTP/3 → MASQUE HTTP/2 → WireGuard → gool → MASQUE×2 | same |
+| Extras | Quick Settings tile, home-screen widget, LAN sharing, split tunneling, MTU/keepalive/watchdog, battery-optimization helper | Bypass-LAN routes, system-proxy save/restore, keepalive, MTU, watchdog, one-tap “run as Administrator” |
+| Language | Persian & English (RTL aware) | Persian & English |
+| Exit info | Country flag + exit IP card after connecting | Country flag + exit IP card after connecting |
+| Minimum OS | Android 7.0 (API 24) | Windows 8.1 (6.3), x64 |
 
-### Download
+### Mandatory updates
 
-GitHub Actions → **Release APK and EXE** → **Run workflow**. The form asks for:
+When a new version is published, **older builds stop working immediately**:
 
-- **App version** (required, example `1.2.0`) — this is the version baked into the APK/EXE and the GitHub Release tag
-- **Release notes** (optional)
-- **Pre-release** (optional)
+- the app checks the release feed on launch, when it returns to the foreground and before every connection;
+- as soon as a newer release exists, the tunnel is torn down, connecting is refused and the app switches to a full-screen notice;
+- that notice links straight to the Telegram channel for the installer and the release notes — install the new version and the app works again;
+- the state is stored locally, so even starting the app offline cannot bring a retired version back to life.
 
-Pushing a `v1.2.0` tag also publishes. Artifacts:
+### Where the releases live
 
-- `Nimbus-VPN-vX.Y.Z-Android-Universal.apk`
-- `Nimbus-VPN-vX.Y.Z-Android-arm64-v8a.apk` / `armeabi-v7a` / `x86_64`
-- `Nimbus-VPN-vX.Y.Z-Android.aab`
-- `Nimbus-VPN-vX.Y.Z-Windows-x64-Installer.exe`
-- `Nimbus-VPN-vX.Y.Z-Windows-x64-Portable.zip`
+Installers and notes are published on the [Telegram channel](https://t.me/Voidrau) and as GitHub Releases of this repository (`https://github.com/AnishtayiN/VoidrauVPN/releases`). The in-app updater reads the latest GitHub Release of this repository.
+
+Build and publish with **GitHub Actions → Release APK and EXE → Run workflow**:
+
+- **App version** (required, e.g. `1.1.0`) — baked into the APK/EXE and used as the release tag
+- **Release notes** (optional) — shown on GitHub *and inside the app* on the update screen
+- **Pre-release** (optional) — drafts are excluded from the update check
+
+Pushing a `v1.1.0` tag publishes too. Artifacts:
+
+- `VoidrauVPN-vX.Y.Z-Android-Universal.apk`
+- `VoidrauVPN-vX.Y.Z-Android-arm64-v8a.apk` / `armeabi-v7a` / `x86_64`
+- `VoidrauVPN-vX.Y.Z-Android.aab`
+- `VoidrauVPN-vX.Y.Z-Windows-x64-Installer.exe`
+- `VoidrauVPN-vX.Y.Z-Windows-x64-Portable.zip`
 - `SHA256SUMS.txt`
 
-The in-app updater downloads these files, checks SHA-256 when GitHub provides a digest, and hands the APK/EXE to the system installer.
-
-The in-app updater reads:
-
-```text
-https://api.github.com/repos/DnsChangerPM/VPN/releases/latest
-```
+The updater verifies SHA-256 when GitHub provides a digest, and on Android checks that the downloaded APK carries the same signing certificate as the installed app before handing it to the system installer.
 
 ### Build locally
 
 ```bash
 # Flutter 3.27+, Android SDK/NDK, Windows 10 SDK for the desktop target
 ./scripts/bootstrap.sh
-bash scripts/fetch_cores.sh
-# Android JNI bridge
-bash scripts/build_hev.sh
+bash scripts/fetch_cores.sh        # tunnel core + platform sidecars (pinned tags)
+bash scripts/build_hev.sh          # Android JNI bridge
 flutter pub get
 flutter test
-flutter build apk --release
-flutter build windows --release   # on Windows
+flutter build apk --release        # --dart-define=VOIDRAU_VERSION=1.1.0
+flutter build windows --release    # on Windows
 ```
 
-Android 7–latest is `minSdk 24`. Windows 8.1 support is requested in the installer (`MinVersion=6.3`) and the runner (`WINVER=0x0603`). Install the [VC++ 2015–2022 x64 redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) on older PCs.
+Notes for maintainers:
 
-### Protocols
-
-Smart Connect tries MASQUE H3 → MASQUE H2 → WireGuard → gool → MASQUE×2 (`--mim`). Scan modes: turbo, balanced, thorough, stealth, ironclad. Obfuscation defaults to `firewall` (MASQUE) and `balanced` (WireGuard/gool).
+- `scripts/pins.json` pins every staged binary; the CI job fails if a pin drifts.
+- The Android application id is **frozen** (`pm.dnschanger.nimbus`) so a new build upgrades an existing install instead of installing next to it. The user-visible name is `VoidrauVPN` everywhere else.
+- The release keystore must stay the same across releases: the updater refuses an APK signed with a different certificate.
+- Bundled third-party components and their licenses are listed in [NOTICE.md](NOTICE.md).
 
 ### Windows device VPN: three bridges
 
-A WinTUN adapter needs a userspace bridge to carry SOCKS5 into it, and no
-single bridge covers Windows 8.1 → 11, so Nimbus stages all three next to
-`nimbus.exe` and picks per machine (`lib/services/windows_tun.dart`):
+A WinTUN adapter needs a userspace bridge, and no single bridge covers Windows 8.1 → 11, so the app stages all three next to the executable and picks per machine:
 
-| Bridge | File | Used on | Why |
-| --- | --- | --- | --- |
-| tun2socks v2.6.0 | `tun2socks.exe` | Windows 10/11 | Current release, baseline x86-64 |
-| tun2socks v2.5.1 | `tun2socks-legacy.exe` | Windows 7/8/8.1 | Last build with **Go 1.20**; Go ≥ 1.21 requires Windows 10+ and dies before creating the adapter |
-| hev-socks5-tunnel 2.17.1 | `hev-socks5-tunnel.exe` + `msys-2.0.dll` | any | C bridge, no Go runtime floor |
+| Bridge | Used on | Why |
+| --- | --- | --- |
+| current release | Windows 10/11 | baseline x86-64 build |
+| legacy build (Go 1.20) | Windows 7/8/8.1 | newer Go runtimes require Windows 10+ and die before creating the adapter |
+| C bridge | any | no Go runtime floor |
 
-Two release-time traps this guards against:
-
-- **`-v3` assets.** GitHub lists `tun2socks-windows-amd64-v3.zip` *before*
-  `tun2socks-windows-amd64.zip`. A GOAMD64=v3 binary dies with an illegal
-  instruction on any pre-Haswell CPU — most Windows 8.1 hardware.
-  `scripts/fetch_cores.sh` reads the embedded Go build info and fails the
-  release build if a v3 asset (or a too-new Go for the legacy slot) sneaks in.
-- **Silent failure.** If no bridge can create the adapter, the app no longer
-  says only *WinTUN adapter "Nimbus" never appeared*; it reports each bridge's
-  exit status and last output line, falls back to SOCKS5 + system proxy so the
-  machine keeps working, and shows the reason on the Diagnostics page.
-
-If the process is not running as Administrator, WinTUN cannot be created at
-all: the Connect and Diagnostics pages offer **Run as Administrator**, which
-relaunches Nimbus through the UAC prompt instead of leaving you to find the
-exe by hand.
+If no bridge can create the adapter, the app reports each bridge's exit status and last output line, falls back to SOCKS5 + system proxy so the machine keeps working, and shows the reason on the Diagnostics page.
 
 ### Windows system proxy
 
-On Windows, Nimbus manages the **system proxy** so connect/disconnect fully
-controls the proxy flow — no manual steps, no leftovers:
+- **SOCKS5 proxy mode** → the system proxy is pointed at `127.0.0.1:<port>` automatically.
+- **Device VPN** → the system proxy is turned off; every app rides the TUN adapter.
+- **Disconnect** → the exact pre-VoidrauVPN proxy settings are restored. If the app was hard-closed mid-session, the next launch removes any leftover proxy pointing at its listener.
 
-- **SOCKS5 proxy mode** (and the fallback when a non-elevated device VPN can
-  only provide SOCKS) → the system proxy is pointed at `127.0.0.1:<port>`
-  automatically.
-- **Device VPN** (elevated, TUN adapter active) → the system proxy is turned
-  **off** automatically; every app rides the TUN adapter directly, with
-  nothing to configure.
-- **Disconnect** → the exact pre-Nimbus proxy settings (your own proxy, or
-  plain "off") are restored and announced to running apps. If the app was
-  hard-closed mid-session instead, the next launch removes any leftover proxy
-  pointing at Nimbus' listener.
+### Troubleshooting
+
+- **Nothing connects.** Try Stealth or Ironclad scan mode, or switch obfuscation to `aggressive`.
+- **MASQUE fails on a filtered network.** Smart Connect retries MASQUE over HTTP/2 with TLS fragmentation, which survives QUIC/UDP blocking.
+- **Windows device VPN is down.** Run as Administrator (the app offers a one-tap relaunch) and check the Diagnostics page for the bridge error.
+- **Android kills the tunnel.** Disable battery optimization for VoidrauVPN (button in Settings → Battery optimization).
+- **“This version has been disabled”.** A newer release exists — install it from [t.me/Voidrau](https://t.me/Voidrau).
 
 ---
 
 ## فارسی
 
-کلاینت مستقل فلاتر برای هسته [Aether](https://github.com/CluvexStudio/Aether) با رابط شبیه [AetherGUI](https://github.com/hamvex/AetherGUI).
+**VoidrauVPN** یک کلاینت وی‌پی‌ان رایگان و متن‌باز با فلاتر برای **اندروید ۷ به بالا** و **ویندوز ۸.۱ تا ۱۱** است؛ با حالت VPN سراسری یا پروکسی SOCKS5 محلی.
 
-- **اندروید ۷ به بالا** و **ویندوز ۸.۱ تا ۱۱**
-- هسته Aether ۲.۰.۰
-- VPN سراسری یا پروکسی SOCKS5 روی `127.0.0.1:1819`
-- در ویندوز، پروکسی سیستمی را خود برنامه مدیریت می‌کند: در حالت پروکسی، خودکار به `127.0.0.1:<پورت>` وصل می‌شود؛ در حالت VPN دستگاه، پروکسی سیستمی خاموش می‌شود و همه برنامه‌ها مستقیم از TUN می‌روند؛ هنگام قطع اتصال، تنظیمات قبلی پروکسی برمی‌گردد
-- برای VPN دستگاه در ویندوز سه پل کنار برنامه قرار می‌گیرد و بر اساس نسخه ویندوز انتخاب می‌شود: `tun2socks` برای ویندوز ۱۰ و ۱۱، `tun2socks-legacy` (ساخته‌شده با Go 1.20) برای ویندوز ۷/۸/۸.۱، و `hev-socks5-tunnel` به‌عنوان گزینه سوم. اگر هیچ‌کدام آداپتور WinTUN را نسازند، دلیل دقیق (کد خروج و آخرین پیام هر پل) در صفحه عیب‌یابی نمایش داده می‌شود و برنامه به SOCKS5 + پروکسی سیستمی برمی‌گردد تا اینترنت قطع نشود
-- اگر برنامه Administrator نباشد، دکمه «اجرا به‌صورت Administrator» در صفحه اتصال و عیب‌یابی برنامه را با UAC دوباره باز می‌کند
-- اتصال هوشمند، MASQUE، WireGuard، gool، MASQUE×2
-- اطلاع‌رسانی به‌روزرسانی از GitHub Releases همین مخزن
+کانال تلگرام (فایل نصبی، توضیحات نسخه‌ها و پشتیبانی): **[t.me/Voidrau](https://t.me/Voidrau)**
 
-برای ساخت APK و EXE: در GitHub Actions ورک‌فلو **Release APK and EXE** را Run کنید. قبل از اجرا **نسخه برنامه** (مثلاً `1.0.0`) از شما پرسیده می‌شود. فایل‌ها در Releases ظاهر می‌شوند.
+### امکانات
 
----
+- اتصال هوشمند: MASQUE روی HTTP/3 → MASQUE روی HTTP/2 → WireGuard → gool → MASQUE×2
+- **VPN دستگاه** روی اندروید و ویندوز، یا **پروکسی SOCKS5** روی `127.0.0.1:1819`
+- در ویندوز پروکسی سیستمی خودکار مدیریت می‌شود: در حالت پروکسی به پورت محلی وصل می‌شود، در حالت VPN دستگاه خاموش می‌شود و هنگام قطع اتصال تنظیمات قبلی برمی‌گردد
+- بعد از اتصال، **پرچم کشور و آی‌پی خروجی** (همان آی‌پی که سایت‌ها می‌بینند) در بالای صفحه نمایش داده می‌شود؛ با یک لمس کپی می‌شود
+- تونل تفکیکی برنامه‌ها، دور زدن شبکه محلی، اشتراک LAN، DNS خصوصی، MTU، keepalive و نگهبان اتصال
+- کاشی تنظیمات سریع و ویجت صفحه اصلی در اندروید
+- رابط فارسی و انگلیسی
 
-## Credits
+### به‌روزرسانی اجباری
 
-- [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) — tunnel core
-- [hamvex/AetherGUI](https://github.com/hamvex/AetherGUI) — UX reference
-- [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) — Android TUN bridge
-- [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) + [WinTUN](https://www.wintun.net/) — Windows TUN bridge
-- [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) — Windows TUN bridge for builds where the Go runtime cannot run
+به‌محض انتشار نسخه جدید، **نسخه‌های قبلی از کار می‌افتند**:
+
+- بررسی انتشار در زمان اجرا، هنگام بازگشت به برنامه و پیش از هر اتصال انجام می‌شود؛
+- اگر نسخه جدیدی منتشر شده باشد، تونل فوراً قطع می‌شود، اتصال ممکن نیست و صفحه‌ای تمام‌صفحه با راهنمای نصب نمایش داده می‌شود؛
+- آن صفحه مستقیم به کانال تلگرام می‌رود؛ فایل نصبی و توضیحات کامل نسخه آنجا منتشر می‌شود؛
+- این وضعیت روی دستگاه ذخیره می‌شود، پس حتی بدون اینترنت هم نسخه قدیمی دوباره فعال نمی‌شود.
+
+### انتشار نسخه
+
+در GitHub Actions ورک‌فلو **Release APK and EXE** را Run کنید؛ **نسخه برنامه** (مثلاً `1.1.0`)، **توضیحات نسخه** (اختیاری — در گیت‌هاب و همچنین در صفحه به‌روزرسانی داخل برنامه نمایش داده می‌شود) و **Pre-release** پرسیده می‌شود. با پوش کردن تگ `v1.1.0` هم انتشار انجام می‌شود.
+
+فایل‌ها: `VoidrauVPN-vX.Y.Z-Android-Universal.apk`، نسخه‌های per-ABI، `VoidrauVPN-vX.Y.Z-Android.aab`، `VoidrauVPN-vX.Y.Z-Windows-x64-Installer.exe`، نسخه Portable و `SHA256SUMS.txt`.
+
+### ساخت محلی
+
+```bash
+./scripts/bootstrap.sh
+bash scripts/fetch_cores.sh
+flutter pub get
+flutter test
+flutter build apk --release --dart-define=VOIDRAU_VERSION=1.1.0
+```
+
+نکته‌ها: شناسه اندروید عمداً ثابت مانده است (`pm.dnschanger.nimbus`) تا نسخه جدید روی نسخه قبلی نصب شود و تنظیمات و امضای برنامه حفظ شود. کلید امضا را بین نسخه‌ها تغییر ندهید؛ برنامه APK با امضای متفاوت را نصب نمی‌کند. فهرست اجزای شخص ثالث در [NOTICE.md](NOTICE.md) است.

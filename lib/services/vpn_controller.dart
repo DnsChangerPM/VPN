@@ -6,10 +6,11 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../app_info.dart';
 import '../l10n/strings.dart';
 import '../models/engine_state.dart';
 import '../models/settings.dart';
-import 'aether_args.dart';
+import 'core_args.dart';
 import 'platform_engine.dart';
 import 'socks_probe.dart';
 import 'update_service.dart';
@@ -41,6 +42,25 @@ class VpnController extends ChangeNotifier {
   /// or is not up instead of guessing from one sentence.
   bool elevated = false;
   String windowsLabel = '';
+
+  /// Mandatory-update state. When a release newer than this build is
+  /// published, the tunnel is refused and the UI switches to the update
+  /// screen — an old build must not keep carrying traffic after the new one
+  /// ships. The state is persisted, so starting the app offline cannot
+  /// resurrect a version that has already been retired.
+  bool _outdated = false;
+  String _outdatedVersion = '';
+  String _outdatedNotes = '';
+  String? _outdatedUrl;
+  DateTime? _lastReleaseCheck;
+
+  /// The release feed is polled this often while the app runs.
+  static const _updateInterval = Duration(minutes: 5);
+
+  /// Minimum gap between two *network* release checks.
+  static const _minCheckGap = Duration(seconds: 45);
+  static const _forceUpdateKey = 'forceUpdate';
+
   Timer? _updateTimer;
   Timer? _statsTimer;
   Timer? _clock;
@@ -84,13 +104,18 @@ class VpnController extends ChangeNotifier {
         ..addAll(list);
       notifyListeners();
     }));
-    await engine.saveNativePrefs(settings);
+    await _restoreForceUpdate(prefs);
+    // Hand the native side the retired flag before anything can start a
+    // tunnel behind the UI's back (Quick Settings tile, boot receiver).
+    await engine.saveNativePrefs(settings, blocked: _outdated);
     notifyListeners();
-    unawaited(refreshUpdate());
-    _updateTimer = Timer.periodic(const Duration(hours: 12), (_) {
+    // The mandatory gate runs regardless of the "automatic checks" preference:
+    // a published release has to reach every running app.
+    unawaited(refreshUpdate(force: true));
+    _updateTimer = Timer.periodic(_updateInterval, (_) {
       if (settings.autoUpdate) unawaited(refreshUpdate());
     });
-    if (settings.autoConnect) {
+    if (settings.autoConnect && !blocked) {
       await Future<void>.delayed(const Duration(milliseconds: 600));
       await toggle();
     }
@@ -103,13 +128,108 @@ class VpnController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshUpdate() async {
-    update = await updates.check();
+  /// True while this build must not be used: a newer release exists.
+  bool get blocked => _outdated;
+
+  /// Version the user has to install (falls back to the running version so the
+  /// screen always has something to show).
+  String get blockedVersion =>
+      _outdatedVersion.isNotEmpty ? _outdatedVersion : (update?.latest ?? '');
+
+  String get runningVersion => update?.current ?? AppInfo.version;
+
+  String get blockedNotes =>
+      _outdatedNotes.isNotEmpty ? _outdatedNotes : (update?.notes ?? '');
+
+  String? get blockedUrl => _outdatedUrl ?? update?.htmlUrl;
+
+  /// The release feed could not be reached on the last attempt.
+  bool get releaseCheckFailed => update?.checkFailed == true;
+
+  /// Checks the release feed and, when a newer build exists, takes this one out
+  /// of service immediately: the tunnel is torn down and connecting is refused
+  /// until the new version is installed.
+  Future<void> refreshUpdate({bool force = false}) async {
+    final now = DateTime.now();
+    final last = _lastReleaseCheck;
+    if (!force && last != null && now.difference(last) < _minCheckGap) {
+      return; // never hammer the GitHub API
+    }
+    _lastReleaseCheck = now;
+    final info = await updates.check();
+    update = info;
+    if (!info.checkFailed) {
+      if (info.available) {
+        _outdated = true;
+        _outdatedVersion = info.latest ?? '';
+        _outdatedNotes = info.notes;
+        _outdatedUrl = info.htmlUrl;
+      } else {
+        _outdated = false;
+        _outdatedVersion = '';
+        _outdatedNotes = '';
+        _outdatedUrl = null;
+      }
+      await _persistForceUpdate();
+      await engine.saveNativePrefs(settings, blocked: _outdated);
+    }
     notifyListeners();
-    if (update?.available == true && settings.autoDownload && !downloading) {
+    if (!blocked) return;
+    _log('release ${blockedVersion.isEmpty ? '?' : blockedVersion} published — '
+        'version ${update?.current ?? AppInfo.version} is out of date');
+    if (snapshot.isActive || busy) await disconnect();
+    if (settings.autoDownload && !downloading && update?.available == true) {
       final wifi = await engine.isWifi();
       if (wifi) unawaited(downloadUpdate());
     }
+  }
+
+  /// Blocks a connect attempt while a newer release exists.
+  Future<bool> _releaseGate() async {
+    await refreshUpdate();
+    return blocked;
+  }
+
+  Future<void> _restoreForceUpdate(SharedPreferences prefs) async {
+    final raw = prefs.getString(_forceUpdateKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      // The notice only applies while this build is older than the release it
+      // points at. Once the user installs that release, the stale note must not
+      // block the very version it announced (first run after the update, even
+      // offline, must already be usable).
+      final target = '${json['version'] ?? ''}';
+      if (target.isNotEmpty && !UpdateService.isNewer(target, AppInfo.version)) {
+        await prefs.remove(_forceUpdateKey);
+        return;
+      }
+      _outdated = true;
+      _outdatedVersion = target;
+      _outdatedNotes = '${json['notes'] ?? ''}';
+      final url = '${json['url'] ?? ''}';
+      _outdatedUrl = url.isEmpty ? null : url;
+      _log('stored update notice: v${_outdatedVersion.isEmpty ? '?' : _outdatedVersion}');
+    } catch (_) {
+      await prefs.remove(_forceUpdateKey);
+    }
+  }
+
+  Future<void> _persistForceUpdate() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!_outdated) {
+      await prefs.remove(_forceUpdateKey);
+      return;
+    }
+    await prefs.setString(
+      _forceUpdateKey,
+      jsonEncode({
+        'version': _outdatedVersion,
+        'notes': _outdatedNotes,
+        'url': _outdatedUrl ?? AppInfo.releasesUrl,
+        'running': AppInfo.version,
+      }),
+    );
   }
 
   Future<void> openUpdate() async {
@@ -165,6 +285,12 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> toggle() async {
+    if (blocked) {
+      toast = s.updateRequiredHeadline;
+      notifyListeners();
+      unawaited(refreshUpdate());
+      return;
+    }
     if (snapshot.phase == EnginePhase.connected ||
         snapshot.phase == EnginePhase.error ||
         snapshot.phase == EnginePhase.disconnecting) {
@@ -189,6 +315,8 @@ class VpnController extends ChangeNotifier {
 
   Future<void> connect() async {
     if (busy) return;
+    // Never open a tunnel on a build that has been retired.
+    if (await _releaseGate()) return;
     _wantUp = true;
     _userDisconnect = false;
     busy = true;
@@ -211,7 +339,7 @@ class VpnController extends ChangeNotifier {
         await _refreshWindowsFacts();
         if (!elevated) _log('$needAdminText ($windowsLabel)');
       }
-      final ladder = AetherLaunch.smartLadder(settings);
+      final ladder = CoreLaunch.smartLadder(settings);
       var lastError = 'connect failed';
       for (var i = 0; i < ladder.length; i++) {
         if (!_wantUp) return;
@@ -225,7 +353,7 @@ class VpnController extends ChangeNotifier {
         _set(snapshot.copyWith(
           phase: EnginePhase.scanning,
           protocol: proto.name,
-          message: 'Aether ${proto.name}',
+          message: '${s.protocol}: ${proto.name}',
         ));
         try {
           await engine.start(attempt, protocol: proto);
@@ -302,7 +430,7 @@ class VpnController extends ChangeNotifier {
   /// before flipping the phase.
   Future<bool> _waitConnected(Protocol proto) async {
     // Generous budget: the gateway scan on a filtered network is the slow
-    // part (AetherGUI gives MASQUE 60s, then races the h2 carrier). Cutting
+    // part (the reference client gives MASQUE 60s, then races the h2 carrier). Cutting
     // at 60s while the core is still mid-scan is what produced the endless
     // spinner and ladder churn.
     final budget = Platform.isAndroid
@@ -374,17 +502,14 @@ class VpnController extends ChangeNotifier {
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       if (snapshot.phase != EnginePhase.connected) return;
       try {
-        final probe = await SocksProbe.cloudflareTrace(
-          port: settings.socksPort,
-        );
-        final map = SocksProbe.parseTrace(probe.body);
+        // Exit facts straight through the tunnel: the public IP of the VPN
+        // itself plus the country that IP belongs to (drives the flag).
+        final exit = await SocksProbe.exitInfo(port: settings.socksPort);
         _set(snapshot.copyWith(
-          pingMs: probe.pingMs,
-          ip: map['ip'] ?? snapshot.ip,
-          location: [
-            map['loc'] ?? '',
-            map['colo'] ?? '',
-          ].where((e) => e.isNotEmpty).join(' · '),
+          pingMs: exit.pingMs,
+          ip: exit.ip.isEmpty ? snapshot.ip : exit.ip,
+          country: exit.country.isEmpty ? snapshot.country : exit.country,
+          location: exit.colo.isEmpty ? snapshot.location : exit.colo,
         ));
         _lastHealthy = DateTime.now();
       } catch (_) {
@@ -539,7 +664,7 @@ class VpnController extends ChangeNotifier {
     _clock?.cancel();
     _watchdogTimer?.cancel();
     // Windows: if the app goes away while the tunnel is still up, stop the
-    // engine too — kills aether.exe, restores the routes and hands the
+    // engine too — kills the tunnel core, restores the routes and hands the
     // system proxy back the way we found it.
     if (Platform.isWindows && (snapshot.isActive || busy)) {
       unawaited(WindowsEngine.instance.stop());
