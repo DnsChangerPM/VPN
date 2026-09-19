@@ -57,19 +57,21 @@ void main() {
   });
 
   group('matchesExitFilter', () {
-    VpnSettings with(ExitFilter f,
-            {List<String> want = const ['DE'],
-            List<String> blocked = const ['IR']}) =>
+    VpnSettings rule(
+      ExitFilter f, {
+      List<String> want = const ['DE'],
+      List<String> blocked = const ['IR'],
+    }) =>
         VpnSettings(exitFilter: f, exitPreferred: want, exitBlocked: blocked);
 
     test('off accepts everything', () {
-      final s = with(ExitFilter.off);
+      final s = rule(ExitFilter.off);
       expect(VpnController.matchesExitFilter('IR', s), isTrue);
       expect(VpnController.matchesExitFilter('DE', s), isTrue);
     });
 
     test('nonIran rejects Iran and accepts anywhere else', () {
-      final s = with(ExitFilter.nonIran);
+      final s = rule(ExitFilter.nonIran);
       expect(VpnController.matchesExitFilter('IR', s), isFalse);
       expect(VpnController.matchesExitFilter('ir', s), isFalse);
       expect(VpnController.matchesExitFilter('DE', s), isTrue);
@@ -79,14 +81,14 @@ void main() {
     });
 
     test('preferred takes Germany, then any country but Iran', () {
-      final s = with(ExitFilter.preferred);
+      final s = rule(ExitFilter.preferred);
       expect(VpnController.matchesExitFilter('DE', s), isTrue);
       expect(VpnController.matchesExitFilter('NL', s), isTrue);
       expect(VpnController.matchesExitFilter('IR', s), isFalse);
     });
 
     test('preferred with several countries accepts each of them', () {
-      final s = with(ExitFilter.preferred, want: const ['DE', 'NL', 'FR']);
+      final s = rule(ExitFilter.preferred, want: const ['DE', 'NL', 'FR']);
       for (final c in ['DE', 'NL', 'FR']) {
         expect(VpnController.matchesExitFilter(c, s), isTrue, reason: c);
       }
@@ -95,7 +97,7 @@ void main() {
     });
 
     test('an emptied preferred list still keeps the blocked country out', () {
-      final s = with(ExitFilter.preferred, want: const []);
+      final s = rule(ExitFilter.preferred, want: const []);
       expect(VpnController.matchesExitFilter('NL', s), isTrue);
       expect(VpnController.matchesExitFilter('DE', s), isTrue);
       expect(VpnController.matchesExitFilter('IR', s), isFalse);
@@ -103,7 +105,7 @@ void main() {
 
     test('an unknown or anonymised exit is accepted, not re-dialled forever',
         () {
-      final s = with(ExitFilter.nonIran);
+      final s = rule(ExitFilter.nonIran);
       // A geo lookup that answers nothing must not become an endless loop.
       expect(VpnController.matchesExitFilter('', s), isTrue);
       expect(VpnController.matchesExitFilter(null, s), isTrue);
