@@ -452,14 +452,16 @@ class VpnController extends ChangeNotifier {
           _pendingDial = null;
           next = requested;
         }
-        // Hoisted into a fresh final so the closure below cannot see a variable
-        // that the loop reassigns (Dart refuses to promote captured locals).
+        // Hoisted into fresh finals: a closure sees the *declared* type of a
+        // captured local, never its promoted one, so the protocol name has to
+        // be unwrapped before firstWhere is built.
         final hop = next;
+        final hopProtocol = hop?.protocol;
         final outcome = await _runAttempt(
           endpoint: hop?.endpoint,
-          only: hop == null
+          only: hopProtocol == null
               ? null
-              : Protocol.values.firstWhere((p) => p.name == hop.protocol,
+              : Protocol.values.firstWhere((p) => p.name == hopProtocol,
                   orElse: () => settings.protocol),
         );
         next = null;
