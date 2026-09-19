@@ -66,6 +66,11 @@ class EngineSnapshot {
     String? country,
     DateTime? connectedAt,
     bool clearConnectedAt = false,
+
+    /// Drops the exit facts (IP, country, colo) of a tunnel that has just been
+    /// rejected or torn down, so the card never shows the *previous* exit while
+    /// the app is still looking for a country the user accepts.
+    bool clearExit = false,
   }) {
     return EngineSnapshot(
       phase: phase ?? this.phase,
@@ -75,9 +80,9 @@ class EngineSnapshot {
       downloadBytes: downloadBytes ?? this.downloadBytes,
       uploadBytes: uploadBytes ?? this.uploadBytes,
       pingMs: pingMs ?? this.pingMs,
-      location: location ?? this.location,
-      ip: ip ?? this.ip,
-      country: country ?? this.country,
+      location: clearExit ? '' : (location ?? this.location),
+      ip: clearExit ? '' : (ip ?? this.ip),
+      country: clearExit ? '' : (country ?? this.country),
       connectedAt:
           clearConnectedAt ? null : (connectedAt ?? this.connectedAt),
     );

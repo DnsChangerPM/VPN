@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/settings.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
+import '../widgets/country_picker.dart';
 import 'app_picker_page.dart';
 
 class ConfigPage extends StatelessWidget {
@@ -95,6 +96,56 @@ class ConfigPage extends StatelessWidget {
           onChanged: (v) => st.endpoint = v,
           onFieldSubmitted: (_) => c.persist(),
         ),
+        _label(s.exitFilter),
+        Text(s.exitFilterHelp,
+            style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
+        const SizedBox(height: 8),
+        _seg(st.exitFilter.name, {
+          'off': s.exitOff,
+          'nonIran': s.exitNonIran,
+          'preferred': s.exitPreferred,
+        }, (v) {
+          st.exitFilter = ExitFilter.values.firstWhere((e) => e.name == v);
+          c.persist();
+        }, wrap: true),
+        if (st.exitFilter == ExitFilter.preferred) ...[
+          _label(s.exitPreferredCountries),
+          CountryPickerRow(
+            fa: s.isFa,
+            selected: st.exitPreferred,
+            onChanged: (v) {
+              st.exitPreferred = v;
+              c.persist();
+            },
+          ),
+        ],
+        if (st.exitFilter != ExitFilter.off) ...[
+          _label(s.exitBlockedCountries),
+          CountryPickerRow(
+            fa: s.isFa,
+            selected: st.exitBlocked,
+            onChanged: (v) {
+              st.exitBlocked = v;
+              c.persist();
+            },
+          ),
+          _label(s.exitAskAfter),
+          TextFormField(
+            initialValue: '${(st.exitAskAfter / 60).round()}',
+            keyboardType: TextInputType.number,
+            onChanged: (v) {
+              final m = int.tryParse(v) ?? 3;
+              st.exitAskAfter = (m < 1 ? 1 : m) * 60;
+            },
+            onFieldSubmitted: (_) => c.persist(),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: VoidrauColors.surface,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              helperText: s.exitPromptTitle(c.exitFilterLabel),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         SwitchListTile(
           value: st.quickReconnect,

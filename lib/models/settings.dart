@@ -4,6 +4,23 @@ enum Protocol { smart, masque, wg, gool, mim }
 
 enum ScanMode { turbo, balanced, thorough, stealth, ironclad }
 
+/// Which exit country a finished tunnel must have before the app accepts it.
+///
+/// The tunnel core picks its own gateway, so the choice happens on the client:
+/// after the core reports `connected`, the exit IP is looked up and the tunnel
+/// is torn down and re-dialled when the country does not match.
+enum ExitFilter {
+  /// Whatever exit the core finds is accepted.
+  off,
+
+  /// Any country except [VpnSettings.exitBlocked] (Iran by default).
+  nonIran,
+
+  /// [VpnSettings.exitPreferred] first (Germany by default), any other
+  /// non-blocked country accepted as a second choice.
+  preferred,
+}
+
 enum IpVersion { v4, v6, dual }
 
 enum MasqueTransport { h3, h2 }
@@ -42,6 +59,11 @@ class VpnSettings {
     this.notifications = true,
     this.watchdog = true,
     this.orbStyle = OrbStyle.mercury,
+    this.exitFilter = ExitFilter.nonIran,
+    this.exitPreferred = const ['DE'],
+    this.exitBlocked = const ['IR'],
+    this.exitAskAfter = 180,
+    this.exitMaxTries = 8,
     this.socksPort = 1819,
     this.keepalive = 5,
     this.tunMtu = 1400,
@@ -73,6 +95,22 @@ class VpnSettings {
   bool notifications;
   bool watchdog;
   OrbStyle orbStyle;
+
+  /// Exit-country rule applied after the tunnel is up.
+  ExitFilter exitFilter;
+
+  /// ISO-3166 alpha-2 codes wanted first by [ExitFilter.preferred].
+  List<String> exitPreferred;
+
+  /// ISO-3166 alpha-2 codes that are never accepted while a filter runs.
+  List<String> exitBlocked;
+
+  /// Seconds of exit searching before the app asks what to do next.
+  int exitAskAfter;
+
+  /// Re-dials tolerated while searching for a matching exit.
+  int exitMaxTries;
+
   int socksPort;
   int keepalive;
   int tunMtu;
@@ -118,12 +156,30 @@ class VpnSettings {
         'notifications': notifications,
         'watchdog': watchdog,
         'orbStyle': orbStyle.name,
+        'exitFilter': exitFilter.name,
+        'exitPreferred': exitPreferred,
+        'exitBlocked': exitBlocked,
+        'exitAskAfter': exitAskAfter,
+        'exitMaxTries': exitMaxTries,
         'socksPort': socksPort,
         'keepalive': keepalive,
         'tunMtu': tunMtu,
         'stallTimeout': stallTimeout,
         'logLevel': logLevel,
       };
+
+  /// Normalises a stored country list: upper-case ISO-3166 alpha-2 codes only,
+  /// duplicates dropped, and an unusable value falls back to [fallback] so a
+  /// hand-edited preference can never disable the filter by accident.
+  static List<String> codes(Object? raw, List<String> fallback) {
+    if (raw is! List) return List<String>.from(fallback);
+    final out = <String>[];
+    for (final e in raw) {
+      final c = '$e'.trim().toUpperCase();
+      if (c.length == 2 && !out.contains(c)) out.add(c);
+    }
+    return out.isEmpty ? List<String>.from(fallback) : out;
+  }
 
   factory VpnSettings.fromJson(Map<String, dynamic> json) {
     T parse<T extends Enum>(List<T> values, String key, T fallback) {
@@ -163,6 +219,11 @@ class VpnSettings {
       notifications: json['notifications'] != false,
       watchdog: json['watchdog'] != false,
       orbStyle: parse(OrbStyle.values, 'orbStyle', OrbStyle.mercury),
+      exitFilter: parse(ExitFilter.values, 'exitFilter', ExitFilter.nonIran),
+      exitPreferred: codes(json['exitPreferred'], const ['DE']),
+      exitBlocked: codes(json['exitBlocked'], const ['IR']),
+      exitAskAfter: num('exitAskAfter', 180),
+      exitMaxTries: num('exitMaxTries', 8),
       socksPort: num('socksPort', 1819),
       keepalive: num('keepalive', 5),
       tunMtu: num('tunMtu', 1400),

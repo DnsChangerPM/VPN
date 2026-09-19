@@ -232,4 +232,42 @@ class S {
       ? 'نصب از کانال تلگرام'
       : 'Install from the Telegram channel';
   String get versionOutdated => isFa ? 'نسخه قدیمی' : 'Outdated version';
+
+  // ── exit country ─────────────────────────────────────────────────────────
+  String get exitFilter => isFa ? 'کشور آی‌پی خروجی' : 'Exit IP country';
+  String get exitFilterHelp => isFa
+      ? 'پس از اتصال، کشور آی‌پی خروجی بررسی می‌شود؛ اگر مطابق انتخاب شما نبود، تونل بسته و مسیر دیگری امتحان می‌شود.'
+      : 'After connecting, the exit IP\'s country is checked; if it is not the one you want, the tunnel is redialled on another route.';
+  String get exitOff => isFa ? 'هر کشوری' : 'Any country';
+  String get exitNonIran => isFa ? 'هر آی‌پی غیر ایران' : 'Any IP but Iran';
+  String get exitPreferred => isFa ? 'کشور دلخواه' : 'Preferred country';
+  String get exitAny => isFa ? 'هر کشوری' : 'any country';
+  String get exitAnyExcept => isFa ? 'هر کشور به‌جز' : 'any country except';
+  String get exitPreferredCountries =>
+      isFa ? 'کشورهای ترجیحی' : 'Preferred countries';
+  String get exitBlockedCountries => isFa ? 'کشورهای حذف‌شده' : 'Excluded countries';
+  String get exitAskAfter => isFa ? 'پرسش پس از (دقیقه)' : 'Ask after (minutes)';
+  String exitSearching(String rule, String seen, int tries, int maxTries) {
+    final t = '$tries/$maxTries';
+    if (isFa) {
+      return seen.isEmpty
+          ? 'جست‌وجوی خروجی $rule — تلاش $t'
+          : 'خروجی $rule می‌خواهیم؛ تاکنون: $seen — تلاش $t';
+    }
+    return seen.isEmpty
+        ? 'Looking for an exit in $rule — attempt $t'
+        : 'Wanted exit: $rule; seen so far: $seen — attempt $t';
+  }
+
+  String exitPromptTitle(String rule) => isFa
+      ? 'هنوز دنبال آی‌پی $rule هستیم'
+      : 'Still looking for an IP in $rule';
+  String exitPromptBody(int minutes, String rule, int tries) => isFa
+      ? '$minutes دقیقه است که برای خروجی «$rule» اسکن می‌کنیم ($tries تلاش). ادامه بدهیم یا به همان آی‌پی ایران وصل شویم؟'
+      : 'We have been scanning for $minutes minutes for an exit matching "$rule" ($tries attempts). Keep looking, or connect with the Iran IP instead?';
+  String get exitKeepScanning => isFa ? 'ادامه اسکن' : 'Keep scanning';
+  String get exitUseIran => isFa ? 'اتصال با آی‌پی ایران' : 'Connect with the Iran IP';
+  String exitNotFound(String rule) => isFa
+      ? 'خروجی $rule پیدا نشد — کشور آی‌پی خروجی را در پیکربندی تغییر دهید'
+      : 'No exit matching $rule was found — change the exit IP country in Configurations';
 }

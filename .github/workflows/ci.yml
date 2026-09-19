@@ -21,18 +21,28 @@ jobs:
           flutter-version: "3.27.4"
           channel: stable
       - run: flutter pub get
+      # Both steps record their own status instead of failing fast: a test that
+      # does not compile must not hide the analyzer's explanation of why.
       - name: Test
         shell: bash
         run: |
           set -uo pipefail
           flutter test 2>&1 | tee test.txt
-          exit "${PIPESTATUS[0]}"
+          echo "${PIPESTATUS[0]}" > .test-status
       - name: Analyze
         shell: bash
         run: |
           set -uo pipefail
           flutter analyze 2>&1 | tee analyze.txt
-          exit "${PIPESTATUS[0]}"
+          echo "${PIPESTATUS[0]}" > .analyze-status
+      - name: Fail on test or analyze findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          rc=0
+          [ "$(cat .test-status 2>/dev/null || echo 1)" = "0" ] || rc=1
+          [ "$(cat .analyze-status 2>/dev/null || echo 1)" = "0" ] || rc=1
+          exit "$rc"
       - name: Publish findings as check annotations
         if: failure()
         shell: bash
@@ -68,9 +78,14 @@ jobs:
               body = tests.read_text(errors="replace").splitlines()
               interesting = [
                   l for l in body
-                  if re.search(r"(Some tests failed|failed to load|Expected:|Actual:|\[E\])", l, re.I)
+                  if re.search(
+                      r"(Some tests failed|failed to load|Expected:|Actual:|\[E\]"
+                      r"|^\S+\.dart:\d+:\d+:|Error:|error \u2022)",
+                      l,
+                      re.I,
+                  )
               ]
-              for line in interesting[:40]:
+              for line in interesting[:80]:
                   emit("error", line)
           PY
 

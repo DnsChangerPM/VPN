@@ -8,6 +8,7 @@ import '../../models/settings.dart';
 import '../../services/links.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
+import '../widgets/country_picker.dart';
 import '../widgets/flag_icon.dart';
 import '../widgets/orb_button.dart';
 
@@ -92,11 +93,23 @@ class ConnectPage extends StatelessWidget {
         const SizedBox(height: 10),
         Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
+        // While the exit-country rule is on, the status line reports the search
+        // (which countries have already been rejected, which attempt this is)
+        // instead of a generic "scanning".
         Text(
-          snap.message.isEmpty ? s.socksHint(c.settings.socksPort) : snap.message,
+          snap.isActive && c.exitFilterActive && c.exitSearchStatus.isNotEmpty
+              ? c.exitSearchStatus
+              : (snap.message.isEmpty
+                  ? s.socksHint(c.settings.socksPort)
+                  : snap.message),
           textAlign: TextAlign.center,
           style: const TextStyle(color: VoidrauColors.muted),
         ),
+        if (!connected)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: ExitFilterBadge(controller: c),
+          ),
         // Device VPN was asked for but this instance is not elevated: one tap
         // does the UAC relaunch instead of leaving the user to find the exe,
         // close the app and right-click it.
