@@ -491,7 +491,7 @@ class VpnController extends ChangeNotifier {
         if (outcome == AttemptOutcome.rejected &&
             _exitTries >= settings.exitMaxTries) {
           _promptTimer?.cancel();
-          _log('exit filter: ${_exitTries} tunnels rejected');
+          _log('exit filter: $_exitTries tunnels rejected');
           _set(snapshot.copyWith(
             phase: EnginePhase.error,
             message: s.exitNotFound(exitFilterLabel),
