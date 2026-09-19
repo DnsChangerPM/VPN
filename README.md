@@ -21,7 +21,32 @@ Telegram channel (releases, install files, notes and support): **[t.me/Voidrau](
 | Extras | Quick Settings tile, home-screen widget, LAN sharing, split tunneling, MTU/keepalive/watchdog, battery-optimization helper | Bypass-LAN routes, system-proxy save/restore, keepalive, MTU, watchdog, one-tap “run as Administrator” |
 | Language | Persian & English (RTL aware) | Persian & English |
 | Exit info | Country flag + exit IP card after connecting | Country flag + exit IP card after connecting |
+| Exit country | Choose it: any IP but Iran, or a preferred country (Germany by default) | same |
 | Minimum OS | Android 7.0 (API 24) | Windows 8.1 (6.3), x64 |
+
+### Exit country: pick where you land
+
+The tunnel core chooses its own gateway, so the exit country cannot be
+requested as a launch parameter. The client enforces it instead:
+
+- **Configurations → Exit IP country** offers *Any country*, *Any IP but Iran*
+  (the default) and *Preferred country* (Germany first, then any country except
+  Iran; both lists are editable with flag chips).
+- After the core reports `connected`, the exit IP is looked up through the
+  tunnel itself (Cloudflare trace, geo API as fallback). If the country does not
+  match, the tunnel is torn down and re-dialled — walking the protocol ladder
+  and flipping the MASQUE carrier between HTTP/3 and HTTP/2, because a different
+  carrier means a different gateway pool.
+- The status line reports the search: which countries have already been
+  rejected and which attempt is running.
+- If the search takes longer than the configured patience (3 minutes by
+  default, editable), the app asks instead of spinning on: **Keep scanning** or
+  **Connect with the Iran IP**. The second choice switches the rule off and
+  redials the gateway that already produced that exit, so it is back in seconds
+  rather than after a fresh scan. Choosing *Keep scanning* brings the question
+  back after another interval.
+- An exit whose country cannot be determined is accepted, so a broken geo
+  lookup can never become an endless re-dial loop.
 
 ### Mandatory updates
 
@@ -113,6 +138,8 @@ If no bridge can create the adapter, the app reports each bridge's exit status a
 - **VPN دستگاه** روی اندروید و ویندوز، یا **پروکسی SOCKS5** روی `127.0.0.1:1819`
 - در ویندوز پروکسی سیستمی خودکار مدیریت می‌شود: در حالت پروکسی به پورت محلی وصل می‌شود، در حالت VPN دستگاه خاموش می‌شود و هنگام قطع اتصال تنظیمات قبلی برمی‌گردد
 - بعد از اتصال، **پرچم کشور و آی‌پی خروجی** (همان آی‌پی که سایت‌ها می‌بینند) در بالای صفحه نمایش داده می‌شود؛ با یک لمس کپی می‌شود
+- **انتخاب کشور آی‌پی خروجی**: «هر آی‌پی غیر ایران» (پیش‌فرض) یا «کشور دلخواه» (آلمان و هر کشور دیگر به‌جز ایران)؛ اگر خروجی مطابق انتخاب شما نباشد، تونل بسته و مسیر دیگری امتحان می‌شود
+- اگر جست‌وجوی خروجی بیش از حد تنظیم‌شده (پیش‌فرض ۳ دقیقه) طول بکشد، برنامه می‌پرسد: **ادامه اسکن** یا **اتصال با آی‌پی ایران**
 - تونل تفکیکی برنامه‌ها، دور زدن شبکه محلی، اشتراک LAN، DNS خصوصی، MTU، keepalive و نگهبان اتصال
 - کاشی تنظیمات سریع و ویجت صفحه اصلی در اندروید
 - رابط فارسی و انگلیسی

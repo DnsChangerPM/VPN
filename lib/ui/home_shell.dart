@@ -24,6 +24,10 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int index = 0;
 
+  /// Guards the "still scanning?" dialog: the controller publishes
+  /// [VpnController.exitPrompt] and the shell turns it into exactly one dialog.
+  bool _asking = false;
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
@@ -39,6 +43,9 @@ class _HomeShellState extends State<HomeShell> {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(toast)));
             c.toast = null;
           });
+        }
+        if (c.exitPrompt && !_asking) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _askAboutExit(c, s));
         }
         return Scaffold(
           drawer: _Drawer(
@@ -79,6 +86,65 @@ class _HomeShellState extends State<HomeShell> {
         );
       },
     );
+  }
+
+  /// The exit-country search has been running longer than the user's patience
+  /// setting (3 minutes by default), so the app asks instead of spinning on:
+  /// keep looking for a foreign exit, or take the Iranian one that already
+  /// worked. Dismissing the dialog counts as "keep looking".
+  Future<void> _askAboutExit(VpnController c, S s) async {
+    if (!mounted || _asking) return;
+    setState(() => _asking = true);
+    final body = c.exitPromptBody;
+    final rule = c.exitFilterLabel;
+    final keep = s.exitKeepScanning;
+    final iran = s.exitUseIran;
+    final title = s.exitPromptTitle(rule);
+    NavigatorState? dialogNavigator;
+    // The search keeps running behind the question. If it lands on an exit the
+    // user wants while they are still reading, the dialog must get out of the
+    // way instead of asking about a problem that no longer exists.
+    void onProgress() {
+      if (c.exitPrompt) return;
+      dialogNavigator?.pop();
+    }
+
+    c.addListener(onProgress);
+    try {
+      final choice = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          dialogNavigator = Navigator.of(dialogContext);
+          return AlertDialog(
+            title: Text(title, style: const TextStyle(fontSize: 17)),
+            content: SingleChildScrollView(child: Text(body)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(keep),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(iran),
+              ),
+            ],
+          );
+        },
+      );
+      if (!mounted) return;
+      // Removed before acting on the answer: both handlers notify listeners,
+      // and a stale listener would pop whatever route comes next.
+      c.removeListener(onProgress);
+      if (choice == true) {
+        await c.acceptBlockedExit();
+      } else {
+        await c.keepSearchingForExit();
+      }
+    } finally {
+      c.removeListener(onProgress);
+      if (mounted) setState(() => _asking = false);
+    }
   }
 }
 
