@@ -2,7 +2,7 @@ import 'dart:io';
 
 /// The userspace bridge that carries the SOCKS5 stream into the WinTUN device.
 ///
-/// Nimbus ships more than one on purpose, because a single bridge cannot cover
+/// VoidrauVPN ships more than one on purpose, because a single bridge cannot cover
 /// every Windows the app claims to support (8.1 → 11):
 ///
 /// * [tun2socks] — the current xjasonlyu/tun2socks release. It is a **Go**
@@ -22,7 +22,7 @@ enum TunBackend {
 
   const TunBackend(this.fileName, this.label);
 
-  /// File name as staged next to `nimbus.exe` (see `scripts/fetch_cores.sh`).
+  /// File name as staged next to `voidrauvpn.exe` (see `scripts/fetch_cores.sh`).
   final String fileName;
 
   /// Human-readable name for logs and the diagnostics page.
@@ -95,7 +95,7 @@ class NetInterface {
   const NetInterface({required this.index, required this.name, this.state = ''});
 
   /// `Idx` column — what `route add ... if <idx>` and `netsh ... interface=`
-  /// need. Names are not stable ("Nimbus 2"), indexes are.
+  /// need. Names are not stable ("Voidrau 2"), indexes are.
   final int index;
   final String name;
   final String state;
@@ -149,11 +149,11 @@ class RouteLine {
       '$destination/$mask gw=$gateway if=$interfaceAddress m=$metric';
 }
 
-/// Parsing helpers for the `netsh` / `route` text output Nimbus has to read on
+/// Parsing helpers for the `netsh` / `route` text output VoidrauVPN has to read on
 /// Windows. Kept free of `Process` calls so they are unit-testable anywhere.
 class Netsh {
   /// `Idx  Met  MTU  State  Name`. The header is localized, the columns are
-  /// not, and the name comes last so it may contain spaces ("Nimbus 2", or
+  /// not, and the name comes last so it may contain spaces ("Voidrau 2", or
   /// "Loopback Pseudo-Interface 1"). States can contain spaces too ("hardware
   /// not present"), so the split is on the column padding, not on single
   /// spaces.
@@ -191,7 +191,7 @@ class Netsh {
   /// Windows appends " 2", " 3"… when an interface of the same name is still
   /// registered (a previous session that was hard-killed, or the pointless
   /// `admin=disable` the old code left behind). Assuming the name is exactly
-  /// [wanted] made Nimbus configure a dead adapter and then report a routing
+  /// [wanted] made VoidrauVPN configure a dead adapter and then report a routing
   /// failure nobody could act on.
   static NetInterface? findAdapter(List<NetInterface> interfaces, String wanted) {
     for (final i in interfaces) {
@@ -298,7 +298,7 @@ class Elevation {
 
 /// Which bridge to try, in which order.
 class TunPlan {
-  /// [available] is what is actually present next to `nimbus.exe`.
+  /// [available] is what is actually present next to `voidrauvpn.exe`.
   ///
   /// On Windows 10+ the current Go bridge goes first (the routing code was
   /// written against it); below Windows 10 it goes **last**, because a
@@ -344,7 +344,7 @@ class TunPlan {
 class HevConfig {
   /// Deliberately **no** `tunnel.ipv4`: hev would stamp a /32 on the adapter
   /// and then fight with the `netsh ... set address` (/30) that the routing
-  /// code needs. Nimbus owns address, DNS and routes for every bridge, so the
+  /// code needs. VoidrauVPN owns address, DNS and routes for every bridge, so the
   /// two bridges stay interchangeable.
   static String yaml({
     required String adapterName,

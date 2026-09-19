@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-class NimbusColors {
+class VoidrauColors {
   static const bg = Color(0xFF05080D);
   static const surface = Color(0xFF0D131C);
   static const surface2 = Color(0xFF121B27);

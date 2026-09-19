@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../data/countries.dart';
 import '../../models/engine_state.dart';
 import '../../models/settings.dart';
+import '../../services/links.dart';
 import '../../services/vpn_controller.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
+import '../widgets/flag_icon.dart';
 import '../widgets/orb_button.dart';
 
 class ConnectPage extends StatelessWidget {
@@ -44,46 +47,12 @@ class ConnectPage extends StatelessWidget {
       case EnginePhase.disconnected:
         title = s.ready;
     }
+    final connected = snap.phase == EnginePhase.connected;
 
     return Column(
       children: [
-        if (c.update?.available == true)
-          Material(
-            color: const Color(0xFF163149),
-            child: InkWell(
-              onTap: c.downloadUpdate,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.system_update_alt, color: NimbusColors.cyan),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            '${s.updateAvailable}: v${c.update!.latest}',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        Text(
-                          c.downloading
-                              ? s.downloading
-                              : s.downloadUpdate,
-                          style: const TextStyle(color: NimbusColors.cyan),
-                        ),
-                      ],
-                    ),
-                    if (c.downloading)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: LinearProgressIndicator(value: c.downloadProgress),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        if (c.update?.available == true) _updateBar(context, c, s),
+        if (connected) _ExitIpCard(controller: c),
         Expanded(
           child: Center(
             child: OrbButton(
@@ -102,18 +71,18 @@ class ConnectPage extends StatelessWidget {
                 ? const Color(0x3327D7F2)
                 : snap.phase == EnginePhase.error
                     ? const Color(0x33FF5D67)
-                    : NimbusColors.surface,
+                    : VoidrauColors.surface,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: NimbusColors.line),
+            border: Border.all(color: VoidrauColors.line),
           ),
           child: Text(
             title,
             style: TextStyle(
               color: snap.phase == EnginePhase.connected
-                  ? NimbusColors.cyan
+                  ? VoidrauColors.cyan
                   : snap.phase == EnginePhase.error
-                      ? NimbusColors.coral
-                      : NimbusColors.muted,
+                      ? VoidrauColors.coral
+                      : VoidrauColors.muted,
               fontWeight: FontWeight.w600,
               fontSize: 12,
             ),
@@ -125,7 +94,7 @@ class ConnectPage extends StatelessWidget {
         Text(
           snap.message.isEmpty ? s.socksHint(c.settings.socksPort) : snap.message,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: NimbusColors.muted),
+          style: const TextStyle(color: VoidrauColors.muted),
         ),
         // Device VPN was asked for but this instance is not elevated: one tap
         // does the UAC relaunch instead of leaving the user to find the exe,
@@ -144,7 +113,7 @@ class ConnectPage extends StatelessWidget {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               '${s.duration}: ${_uptime(snap.connectedAt!)}',
-              style: const TextStyle(color: NimbusColors.muted, fontSize: 12),
+              style: const TextStyle(color: VoidrauColors.muted, fontSize: 12),
             ),
           ),
         TextButton(
@@ -170,16 +139,53 @@ class ConnectPage extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: Text(
-            snap.isActive && snap.location.isEmpty && snap.ip.isEmpty
-                ? s.detecting
-                : snap.location.isEmpty
-                    ? (snap.ip.isEmpty ? s.freeNote : snap.ip)
-                    : '${s.location}: ${snap.location}  ${snap.ip}',
+            connected
+                ? s.freeNote
+                : (snap.isActive ? s.detecting : s.freeNote),
             textAlign: TextAlign.center,
-            style: const TextStyle(color: NimbusColors.muted, fontSize: 13),
+            style: const TextStyle(color: VoidrauColors.muted, fontSize: 13),
           ),
         ),
       ],
+    );
+  }
+
+  /// A newer release exists: this build can no longer connect, and the only
+  /// route to a working app is the Telegram channel.
+  Widget _updateBar(BuildContext context, VpnController c, S s) {
+    return Material(
+      color: const Color(0xFF163149),
+      child: InkWell(
+        onTap: () => Links.openTelegram(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.system_update_alt, color: VoidrauColors.cyan),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${s.updateAvailable}: v${c.blockedVersion}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Text(
+                    c.downloading ? s.downloading : s.downloadFromChannel,
+                    style: const TextStyle(color: VoidrauColors.cyan),
+                  ),
+                ],
+              ),
+              if (c.downloading)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: LinearProgressIndicator(value: c.downloadProgress),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -187,7 +193,7 @@ class ConnectPage extends StatelessWidget {
     return Expanded(
       child: Column(
         children: [
-          Text(k, style: const TextStyle(color: NimbusColors.muted, fontSize: 12)),
+          Text(k, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
           const SizedBox(height: 4),
           Text(v, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
@@ -213,5 +219,116 @@ class ConnectPage extends StatelessWidget {
     final m = (d.inMinutes % 60).toString().padLeft(2, '0');
     final sec = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$h:$m:$sec';
+  }
+}
+
+/// The "where am I?" card shown once the tunnel is up: the flag of the country
+/// the exit IP belongs to, the exit IP itself (the IP websites see), the
+/// datacenter hint and the round-trip time. Tapping it copies the IP.
+class _ExitIpCard extends StatelessWidget {
+  const _ExitIpCard({required this.controller});
+  final VpnController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    final s = c.s;
+    final snap = c.snapshot;
+    final code = snap.country.trim().toUpperCase();
+    final name = countryLabel(code, fa: s.isFa);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Material(
+        color: VoidrauColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: snap.ip.isEmpty
+              ? null
+              : () {
+                  Clipboard.setData(ClipboardData(text: snap.ip));
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text(s.ipCopied)));
+                },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: VoidrauColors.line),
+            ),
+            child: Row(
+              children: [
+                FlagIcon(
+                  countryCode: code.isEmpty ? null : code,
+                  height: 30,
+                  radius: 5,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name.isEmpty ? s.detecting : name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800, fontSize: 15),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          const Icon(Icons.public,
+                              size: 13, color: VoidrauColors.muted),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              snap.ip.isEmpty ? s.detecting : snap.ip,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'Consolas',
+                                fontSize: 13,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                          if (snap.location.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              '· ${snap.location}',
+                              style: const TextStyle(
+                                  color: VoidrauColors.muted, fontSize: 12),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      s.exitIp,
+                      style: const TextStyle(
+                          color: VoidrauColors.muted, fontSize: 10),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      snap.pingMs == null ? '—' : '${snap.pingMs} ms',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    const SizedBox(height: 4),
+                    const Icon(Icons.copy,
+                        size: 13, color: VoidrauColors.muted),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

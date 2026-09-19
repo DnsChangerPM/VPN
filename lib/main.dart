@@ -2,32 +2,59 @@ import 'package:flutter/material.dart';
 
 import 'models/settings.dart';
 import 'services/vpn_controller.dart';
-import 'theme/nimbus_theme.dart';
+import 'theme/voidrau_theme.dart';
 import 'ui/home_shell.dart';
+import 'ui/pages/force_update_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const NimbusApp());
+  runApp(const VoidrauApp());
 }
 
-class NimbusApp extends StatefulWidget {
-  const NimbusApp({super.key});
+class VoidrauApp extends StatefulWidget {
+  const VoidrauApp({super.key});
 
   @override
-  State<NimbusApp> createState() => _NimbusAppState();
+  State<VoidrauApp> createState() => _VoidrauAppState();
 }
 
-class _NimbusAppState extends State<NimbusApp> {
+class _VoidrauAppState extends State<VoidrauApp> with WidgetsBindingObserver {
   final controller = VpnController();
+  final _navigator = GlobalKey<NavigatorState>();
+  bool _locked = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    controller.addListener(_watchLock);
     controller.boot();
+  }
+
+  /// Coming back to the foreground is one of the mandatory-update checkpoints:
+  /// a release published while the app was in the background locks it here.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      controller.refreshUpdate();
+    }
+  }
+
+  /// As soon as the app is locked by a newer release, unwind whatever page the
+  /// user is on: the update screen must be the only reachable surface.
+  void _watchLock() {
+    if (controller.blocked == _locked) return;
+    _locked = controller.blocked;
+    if (!_locked) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _navigator.currentState?.popUntil((route) => route.isFirst);
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    controller.removeListener(_watchLock);
     controller.dispose();
     super.dispose();
   }
@@ -45,10 +72,11 @@ class _NimbusAppState extends State<NimbusApp> {
             MediaQuery.platformBrightnessOf(context) == Brightness.dark,
         };
         return MaterialApp(
-          title: 'Nimbus VPN',
+          title: 'VoidrauVPN',
+          navigatorKey: _navigator,
           debugShowCheckedModeBanner: false,
-          theme: NimbusColors.light(),
-          darkTheme: NimbusColors.dark(),
+          theme: VoidrauColors.light(),
+          darkTheme: VoidrauColors.dark(),
           themeMode: dark ? ThemeMode.dark : ThemeMode.light,
           locale: controller.rtl ? const Locale('fa') : const Locale('en'),
           builder: (context, child) {
@@ -58,7 +86,11 @@ class _NimbusAppState extends State<NimbusApp> {
               child: child ?? const SizedBox.shrink(),
             );
           },
-          home: HomeShell(controller: controller),
+          // A retired build shows one screen and nothing else: no connect
+          // button, no tunnel, just the way to the new version.
+          home: controller.blocked
+              ? ForceUpdatePage(controller: controller)
+              : HomeShell(controller: controller),
         );
       },
     );

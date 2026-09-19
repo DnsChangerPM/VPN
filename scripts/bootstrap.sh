@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-flutter create . --project-name nimbus --org pm.dnschanger --platforms=android,windows
+flutter create . --project-name voidrauvpn --org pm.dnschanger --platforms=android,windows
 if command -v python3 >/dev/null 2>&1; then
   PYTHON="python3"
 elif command -v python >/dev/null 2>&1; then

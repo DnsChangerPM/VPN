@@ -120,6 +120,81 @@ class SocksProbe {
     return (body: r.body, pingMs: r.pingMs);
   }
 
+  /// Exit facts for the dashboard: the public IP the tunnel presents and the
+  /// country that IP is registered in — this is the "VPN's own IP" the user
+  /// sees after connecting.
+  ///
+  /// Cloudflare's trace answers both in one request; when it is unreachable or
+  /// anonymised (Tor's `T1`, Cloudflare's `XX`), a plain-HTTP geo lookup goes
+  /// through the same SOCKS listener so the card still has something to show.
+  static Future<({String ip, String country, String colo, int pingMs})> exitInfo({
+    String host = '127.0.0.1',
+    int port = 1819,
+  }) async {
+    Object? lastError;
+    try {
+      final r = await httpGet(
+        'www.cloudflare.com',
+        '/cdn-cgi/trace',
+        host: host,
+        port: port,
+        timeout: const Duration(seconds: 12),
+      );
+      final map = parseTrace(r.body);
+      final ip = (map['ip'] ?? '').trim();
+      final cc = countryCode(map['loc'] ?? '');
+      if (ip.isNotEmpty && cc.isNotEmpty) {
+        return (
+          ip: ip,
+          country: cc,
+          colo: (map['colo'] ?? '').trim(),
+          pingMs: r.pingMs,
+        );
+      }
+      if (ip.isNotEmpty || cc.isNotEmpty) {
+        // Partial answer: keep what we have and let the caller merge it.
+        return (
+          ip: ip,
+          country: cc,
+          colo: (map['colo'] ?? '').trim(),
+          pingMs: r.pingMs,
+        );
+      }
+      lastError = const SocketException('empty trace');
+    } catch (e) {
+      lastError = e;
+    }
+    try {
+      final r = await httpGet(
+        'ip-api.com',
+        '/json/?fields=status,countryCode,query',
+        host: host,
+        port: port,
+        timeout: const Duration(seconds: 10),
+      );
+      final json = jsonDecode(r.body) as Map<String, dynamic>;
+      return (
+        ip: '${json['query'] ?? ''}'.trim(),
+        country: countryCode('${json['countryCode'] ?? ''}'),
+        colo: '',
+        pingMs: r.pingMs,
+      );
+    } catch (e) {
+      lastError = e;
+    }
+    throw SocketException('exit lookup failed: $lastError');
+  }
+
+  /// Normalises a country code coming from a trace/geo API. Empty string means
+  /// "unknown" — `XX` and `T1` are the anonymised placeholders the APIs use.
+  static String countryCode(String raw) {
+    final v = raw.trim().toUpperCase();
+    if (v.length != 2) return '';
+    if (v == 'XX' || v == 'T1' || v == 'A1' || v == 'A2') return '';
+    if (!RegExp(r'^[A-Z]{2}$').hasMatch(v)) return '';
+    return v;
+  }
+
   /// One SOCKS5 CONNECT + HTTP/1.0 GET against `target:80`.
   static Future<({String body, int pingMs})> httpGet(
     String name,
@@ -175,7 +250,7 @@ class SocksProbe {
         await readN(n + 2);
       }
       socket.add(utf8.encode(
-        'GET $path HTTP/1.0\r\nHost: $name\r\nUser-Agent: nimbus-probe\r\n\r\n',
+        'GET $path HTTP/1.0\r\nHost: $name\r\nUser-Agent: voidrau-probe\r\n\r\n',
       ));
       await socket.flush();
       final chunks = BytesBuilder()..add(stash);

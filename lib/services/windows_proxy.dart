@@ -21,7 +21,7 @@ class ProxyState {
   final String? overrideList;
 }
 
-/// Owns the Windows **system proxy** for the lifetime of a Nimbus session,
+/// Owns the Windows **system proxy** for the lifetime of a VoidrauVPN session,
 /// so the app's on/off state actually controls the proxy flow:
 ///
 ///  * SOCKS5 proxy mode (and the non-elevated device-VPN fallback) →
@@ -30,7 +30,7 @@ class ProxyState {
 ///    **off**: every app must ride the TUN adapter directly, and a stale
 ///    manual proxy would let WinINET apps (browsers) shortcut the tunnel
 ///    through the raw SOCKS listener.
-///  * disconnect → whatever settings the user had before Nimbus are
+///  * disconnect → whatever settings the user had before VoidrauVPN are
 ///    restored exactly. When no snapshot exists (previous run hard-killed),
 ///    at minimum any proxy still pointing at our own listener is removed.
 ///
@@ -106,7 +106,7 @@ class WindowsSystemProxy {
     );
   }
 
-  /// The state Nimbus applies while its proxy mode is connected: point the
+  /// The state VoidrauVPN applies while its proxy mode is connected: point the
   /// system proxy at our own loopback listener, keeping loopback direct.
   static ProxyState loopback(int port) => ProxyState(
         enabled: true,
@@ -114,7 +114,7 @@ class WindowsSystemProxy {
         overrideList: '127.0.0.1;localhost;<local>',
       );
 
-  /// Points the system proxy at Nimbus' loopback listener [port].
+  /// Points the system proxy at the VoidrauVPN loopback listener [port].
   Future<void> enableOurs(int port) => apply(loopback(port));
 
   /// Turns the system proxy off entirely (direct connection).

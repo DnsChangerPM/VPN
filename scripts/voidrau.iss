@@ -5,23 +5,26 @@
 #define BuildDir "..\build\windows\x64\runner\Release"
 #endif
 
-#define MyAppName "Nimbus VPN"
-#define MyAppPublisher "DnsChangerPM"
-#define MyAppURL "https://github.com/DnsChangerPM/VPN"
-#define MyAppExeName "nimbus.exe"
+#define MyAppName "VoidrauVPN"
+#define MyAppPublisher "AnishtayiN"
+#define MyAppURL "https://github.com/AnishtayiN/VoidrauVPN"
+#define MyAppExeName "voidrauvpn.exe"
 
 [Setup]
+; The AppId is kept across the rebrand on purpose: keeping it makes this
+; installer an upgrade of an existing install instead of a second app in a
+; different folder.
 AppId={{9C2E1B6A-7F44-4C1E-9A11-A7B8C9D0E1F2}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
-DefaultDirName={autopf}\Nimbus VPN
-DefaultGroupName=Nimbus VPN
+DefaultDirName={autopf}\VoidrauVPN
+DefaultGroupName=VoidrauVPN
 DisableProgramGroupPage=yes
 OutputDir=..\release
-OutputBaseFilename=Nimbus-VPN-v{#MyAppVersion}-Windows-x64-Installer
+OutputBaseFilename=VoidrauVPN-v{#MyAppVersion}-Windows-x64-Installer
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

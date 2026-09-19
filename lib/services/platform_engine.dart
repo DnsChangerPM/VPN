@@ -7,12 +7,13 @@ import 'package:path/path.dart' as p;
 
 import '../models/engine_state.dart';
 import '../models/settings.dart';
-import 'aether_args.dart';
+import 'core_args.dart';
 import 'socks_probe.dart';
 import 'windows_proxy.dart';
 import 'windows_tun.dart';
 
 class PlatformEngine {
+  // Channel ids are shared with the native side (overlays/android/…/NimbusPlugin.kt).
   static const _channel = MethodChannel('nimbus.vpn/engine');
   static const _events = EventChannel('nimbus.vpn/events');
 
@@ -34,8 +35,8 @@ class PlatformEngine {
     final cfg = {
       ...settings.toJson(),
       // The native side drives the core through environment variables only
-      // (AetherGUI pattern); it knows its own config/temp paths.
-      'env': AetherLaunch.environmentLines(
+      // (its documented contract); it knows its own config/temp paths.
+      'env': CoreLaunch.environmentLines(
         settings,
         override: protocol,
         configPath: 'aether.toml',
@@ -126,16 +127,19 @@ class PlatformEngine {
     return ok ?? false;
   }
 
-  Future<void> saveNativePrefs(VpnSettings settings) async {
+  Future<void> saveNativePrefs(VpnSettings settings, {bool blocked = false}) async {
     if (!Platform.isAndroid) return;
     await _channel.invokeMethod('savePrefs', {
       'autoConnect': settings.autoConnect,
       'lanShare': settings.lanShare,
+      // A retired build must not be able to tunnel through a Quick Settings
+      // tile or the boot receiver, which never go through the UI.
+      'blocked': blocked,
     });
   }
 }
 
-/// Windows: spawns `aether.exe` (env-only config, like the reference GUI),
+/// Windows: spawns the tunnel core (`aether.exe`) with env-only config,
 /// waits for a real SOCKS5 handshake, proves the data plane, then puts a
 /// WinTUN full-device tunnel in front when running elevated — trying whichever
 /// bridge (tun2socks, its Go 1.20 legacy build, or hev-socks5-tunnel) can
@@ -149,7 +153,7 @@ class WindowsEngine {
 
   static final instance = WindowsEngine._();
 
-  Process? _aether;
+  Process? _core;
   Process? _tun;
   final _logs = StreamController<String>.broadcast();
   EnginePhase phase = EnginePhase.disconnected;
@@ -165,10 +169,14 @@ class WindowsEngine {
   final _rangeRoutes = <String>[];
   String _runDir = '';
 
-  /// WinTUN adapter name we ask for. Windows may hand back "Nimbus 2" when a
+  /// WinTUN adapter name we ask for. Windows may hand back "Voidrau 2" when a
   /// stale interface of that name is still registered, so the *real* name and
   /// index are discovered after the bridge starts and used from then on.
-  static const String adapterBase = 'Nimbus';
+  static const String adapterBase = 'Voidrau';
+
+  /// Adapter names used by earlier builds; cleaned up during network recovery so
+  /// an upgraded install never leaves a dead interface behind.
+  static const List<String> legacyAdapterBases = ['Nimbus', 'VoidrauVPN'];
   static const String tunIp = '198.18.0.1';
   static const String tunMask = '255.255.255.252';
 
@@ -198,7 +206,7 @@ class WindowsEngine {
   ///
   /// It reads the integrity level from `whoami /groups` instead of `net
   /// session`: `net session` fails on any PC where the LanmanServer service is
-  /// stopped or disabled, which used to make Nimbus tell a real Administrator
+  /// stopped or disabled, which used to make VoidrauVPN tell a real Administrator
   /// to "restart as Administrator" forever.
   Future<bool> isAdmin() async {
     final cached = _elevated;
@@ -223,7 +231,7 @@ class WindowsEngine {
         'error': tunError.isEmpty ? '—' : tunError,
       };
 
-  /// Relaunches Nimbus through the UAC prompt and closes this instance, so
+  /// Relaunches VoidrauVPN through the UAC prompt and closes this instance, so
   /// "run as Administrator for full VPN" is one tap instead of: find the exe,
   /// close the app, right-click, run as administrator, connect again.
   Future<bool> restartElevated() async {
@@ -262,7 +270,7 @@ class WindowsEngine {
     final base = Platform.environment['LOCALAPPDATA'] ??
         Platform.environment['APPDATA'] ??
         Directory.systemTemp.path;
-    final dir = Directory(p.join(base, 'Nimbus VPN'));
+    final dir = Directory(p.join(base, 'VoidrauVPN'));
     dir.createSync(recursive: true);
     _runDir = dir.path;
     return _runDir;
@@ -275,17 +283,17 @@ class WindowsEngine {
     this.protocol = protoName;
     lastError = '';
     phase = EnginePhase.scanning;
-    message = 'Starting Aether core';
+    message = 'Starting tunnel core';
     _emit();
 
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    final aether = File(p.join(exeDir, 'aether.exe'));
-    if (!aether.existsSync()) {
+    final coreFile = File(p.join(exeDir, 'aether.exe'));
+    if (!coreFile.existsSync()) {
       // Fall back to the sidecar directory used in development.
       final sidecar = File(p.join(Directory.current.path, 'third_party',
           'windows', 'aether.exe'));
       if (!sidecar.existsSync()) {
-        throw FileSystemException('aether.exe not found', aether.path);
+        throw FileSystemException('aether.exe not found', coreFile.path);
       }
     }
 
@@ -295,31 +303,31 @@ class WindowsEngine {
     _lanBypass.clear();
     _rangeRoutes.clear();
 
-    final env = AetherLaunch.environment(
+    final env = CoreLaunch.environment(
       settings,
       override: proto,
       configPath: p.join(runtimeDir, 'aether.toml'),
     );
-    final aetherPath = aether.existsSync()
-        ? aether.path
+    final corePath = coreFile.existsSync()
+        ? coreFile.path
         : p.join(Directory.current.path, 'third_party', 'windows',
             'aether.exe');
-    _aetherExited = false;
-    _aether = await Process.start(
-      aetherPath,
-      const [], // env-only configuration (AetherGUI pattern)
+    _coreExited = false;
+    _core = await Process.start(
+      corePath,
+      const [], // env-only configuration (the core's contract)
       workingDirectory: runtimeDir,
       environment: {...Platform.environment, ...env},
     );
-    _aether!.stdout.transform(utf8.decoder).listen(_onLog);
-    _aether!.stderr.transform(utf8.decoder).listen(_onLog);
-    _aether!.exitCode.then((code) {
-      _aetherExited = true;
+    _core!.stdout.transform(utf8.decoder).listen(_onLog);
+    _core!.stderr.transform(utf8.decoder).listen(_onLog);
+    _core!.exitCode.then((code) {
+      _coreExited = true;
       if (phase == EnginePhase.connected ||
           phase == EnginePhase.connecting ||
           phase == EnginePhase.scanning) {
         phase = EnginePhase.error;
-        message = lastError.isEmpty ? 'Aether exited ($code)' : lastError;
+        message = lastError.isEmpty ? 'Tunnel core exited ($code)' : lastError;
         _emit();
       }
     });
@@ -337,7 +345,7 @@ class WindowsEngine {
     }
 
     // Proving traffic is the difference between "connected" and "the core
-    // opened a listener for a tunnel that carries nothing" (AetherGUI's
+    // opened a listener for a tunnel that carries nothing" (the reference
     // proven-data-plane gate).
     phase = EnginePhase.connecting;
     message = 'Verifying the tunnel';
@@ -431,23 +439,23 @@ class WindowsEngine {
       phase = EnginePhase.disconnecting;
       _emit();
     }
-    final aether = _aether;
-    _aether = null;
+    final core = _core;
+    _core = null;
 
     // Routes go first: while the default route still points at the TUN,
     // killing the bridge would leave the machine with no way out at all.
     await _removeRoutes(forgetUpstreams: true);
     await _killTun();
     try {
-      aether?.kill(ProcessSignal.sigterm);
+      core?.kill(ProcessSignal.sigterm);
     } catch (_) {}
     await Future<void>.delayed(const Duration(milliseconds: 400));
     try {
-      aether?.kill(ProcessSignal.sigkill);
+      core?.kill(ProcessSignal.sigkill);
     } catch (_) {}
     await _awaitAdapterGone();
     // Disconnect means proxy flow stops too: hand the system proxy back to
-    // whatever it was before Nimbus, so the machine is left direct (or with
+    // whatever it was before VoidrauVPN, so the machine is left direct (or with
     // the user's own proxy) instead of pointing at a dead listener.
     await WindowsSystemProxy.instance.restore(ourPort: _socksPort);
     tunBackend = '';
@@ -461,8 +469,8 @@ class WindowsEngine {
 
   /// Terminates the TUN bridge. The WinTUN adapter is owned by the process, so
   /// closing it removes the adapter — no `netsh ... admin=disable` needed (that
-  /// is what left a stale "Nimbus" interface behind and made the next session
-  /// land on "Nimbus 2").
+  /// is what left a stale "Voidrau" interface behind and made the next session
+  /// land on "Voidrau 2").
   Future<void> _killTun() async {
     final tun = _tun;
     _tun = null;
@@ -481,7 +489,7 @@ class WindowsEngine {
   }
 
   /// Confirms the adapter is really gone, so the next connect can reuse the
-  /// name "Nimbus" instead of being handed "Nimbus 2" by Windows.
+  /// name "Voidrau" instead of being handed "Voidrau 2" by Windows.
   Future<void> _awaitAdapterGone() async {
     final name = tunAdapter.isEmpty ? adapterBase : tunAdapter;
     tunAdapter = '';
@@ -508,8 +516,12 @@ class WindowsEngine {
     await stop();
     await Process.run('ipconfig', ['/flushdns']);
     // A run that was hard-killed can leave the adapter registered. Only then
-    // do we take it down — by index, because the name may be "Nimbus 2".
-    final stale = Netsh.findAdapter(await _interfaces(), adapterBase);
+    // do we take it down — by index, because the name may be "Voidrau 2".
+    final live = await _interfaces();
+    final stale = Netsh.findAdapter(live, adapterBase) ??
+        legacyAdapterBases
+            .map((legacy) => Netsh.findAdapter(live, legacy))
+            .firstWhere((a) => a != null, orElse: () => null);
     if (stale != null) {
       _logLine('removing leftover adapter ${stale.name} (#${stale.index})');
       await Process.run('netsh',
@@ -517,7 +529,7 @@ class WindowsEngine {
     }
   }
 
-  bool _aetherExited = false;
+  bool _coreExited = false;
 
   /// Waits for the SOCKS5 listener to answer a real method-selection
   /// greeting, failing fast when the core exits (bad flags, unwritable
@@ -525,7 +537,7 @@ class WindowsEngine {
   Future<bool> _waitSocks(Duration budget) async {
     final deadline = DateTime.now().add(budget);
     while (DateTime.now().isBefore(deadline)) {
-      if (_aether == null || _aetherExited) return false;
+      if (_core == null || _coreExited) return false;
       final ok = await SocksProbe.handshake(
           port: _socksPort, timeout: const Duration(seconds: 2));
       if (ok) return true;
@@ -604,7 +616,7 @@ class WindowsEngine {
     tunIndex = -1;
     tunError = '';
 
-    // The installed layout keeps every bridge next to `nimbus.exe`; a
+    // The installed layout keeps every bridge next to `voidrauvpn.exe`; a
     // development run keeps them in `third_party/windows`.
     final dirs = <String>[
       dir,
@@ -631,7 +643,7 @@ class WindowsEngine {
     ];
     if (wintun == null || bridges.isEmpty) {
       lastError = 'device VPN files missing (${missing.join(', ')}) — '
-          'reinstall Nimbus; running SOCKS5 only';
+          'reinstall VoidrauVPN; running SOCKS5 only';
       tunError = lastError;
       _logLine(lastError);
       return false;
@@ -819,7 +831,7 @@ class WindowsEngine {
 
   /// Sends a netsh sub-command to the tunnel adapter, trying the interface
   /// index first (digits survive Windows command-line quoting) and the real
-  /// adapter name second ("Nimbus 2" contains a space).
+  /// adapter name second ("Voidrau 2" contains a space).
   Future<ProcessResult> _netsh(List<String> argv) async {
     ProcessResult? last;
     for (final target in ['$tunIndex', tunAdapter]) {
@@ -898,7 +910,7 @@ class WindowsEngine {
       ),
       // Some netsh builds resolve the interface by name where the index
       // comes up short (and a name still resolves when the adapter was
-      // handed out as "Nimbus 2" — its index is exactly what we have).
+      // handed out as "Voidrau 2" — its index is exactly what we have).
       if (tunAdapter.isNotEmpty) ...[
         _RouteForm(
           ['netsh', 'interface', 'ipv4', 'add', 'route', 'prefix=0.0.0.0/0', 'interface=$tunAdapter', 'nexthop=$tunIp', 'metric=5'],
@@ -1032,7 +1044,8 @@ class WindowsEngine {
   /// Bypass the tunnel's own upstreams before the default route goes in —
   /// missing one is the difference between a tunnel and a routing loop. The
   /// ranges are the full WARP candidate space the core can scan
-  /// (aether/src/prober.rs), collapsed into the documented /20 ingress blocks.
+  /// (the core's connectivity prober), collapsed into the documented /20
+  /// ingress blocks.
   Future<void> _bypassUpstreams(VpnSettings settings) async {
     const warpRanges = [
       ['162.159.192.0', '255.255.240.0'], // 162.159.192-207, every MASQUE CIDR

@@ -29,9 +29,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Device VPN / local SOCKS harness around the Aether core.
+ * Device VPN / local SOCKS harness around the Tunnel core.
  *
- * Lifecycle deliberately mirrors the reference client (hamvex/AetherGUI):
+ * Lifecycle is deliberately staged:
  *
  *  1. stale cores from an older session are reaped — one wedged instance that
  *     still owns :1819 used to make every later Connect report "connected"
@@ -70,6 +70,17 @@ class NimbusVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             ACTION_START, null -> {
+                if (isRetired()) {
+                    // A newer release exists: starting the tunnel here would
+                    // keep a retired build alive without the UI ever knowing.
+                    sendLog("a newer release is available — refusing to start this build")
+                    // The caller may have used startForegroundService(), which
+                    // must be answered with a notification before the service
+                    // goes away. It is destroyed again immediately.
+                    startForegroundCompat()
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 val extras = intent?.extras ?: lastExtras ?: extrasFromPrefs()
                 if (intent?.extras != null) lastExtras = Bundle(intent.extras!!)
                 io.execute { startTunnel(extras) }
@@ -84,6 +95,10 @@ class NimbusVpnService : VpnService() {
         io.shutdownNow()
         super.onDestroy()
     }
+
+    /// Set by the app whenever the release feed reports a newer build.
+    private fun isRetired(): Boolean =
+        getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("blocked", false)
 
     private fun isCurrent(session: Long): Boolean =
         running.get() && generation.get() == session
@@ -122,7 +137,7 @@ class NimbusVpnService : VpnService() {
 
             val bin = File(applicationInfo.nativeLibraryDir, "libaether.so")
             if (!bin.isFile) {
-                throw IllegalStateException("Aether core is missing for this device architecture")
+                throw IllegalStateException("Tunnel core is missing for this device architecture")
             }
 
             // One stale core that outlived its session still owns the SOCKS
@@ -243,8 +258,8 @@ class NimbusVpnService : VpnService() {
         env.forEach { (k, v) -> pbEnv[k] = v }
         val process = builder.start()
         core = process
-        sendLog("Aether core started (${Build.SUPPORTED_ABIS.firstOrNull() ?: "abi"})")
-        val reader = Thread({ readCoreLogs(process) }, "aether-log-reader")
+        sendLog("Tunnel core started (${Build.SUPPORTED_ABIS.firstOrNull() ?: "abi"})")
+        val reader = Thread({ readCoreLogs(process) }, "core-log-reader")
         reader.isDaemon = true
         reader.start()
         return process
@@ -339,7 +354,7 @@ class NimbusVpnService : VpnService() {
                 }
             }
         } catch (e: Exception) {
-            if (running.get()) sendLog("Aether log stream closed: ${e.message}")
+            if (running.get()) sendLog("Tunnel-core log stream closed: ${e.message}")
         }
     }
 
@@ -370,7 +385,7 @@ class NimbusVpnService : VpnService() {
             if (h3GatewayUnavailable) return false
             val process = core
             if (process != null && !process.isAlive) {
-                lastCoreError = "Aether core exited (${process.exitValueSafely()})" +
+                lastCoreError = "Tunnel core exited (${process.exitValueSafely()})" +
                     lastCoreError.let { if (it.isEmpty()) "" else ": $it" }
                 return false
             }
@@ -393,7 +408,7 @@ class NimbusVpnService : VpnService() {
 
     /**
      * Kills stale cores from previous sessions. They share nothing with this
-     * process, so the only safe handle is /proc: every Aether child's cmdline
+     * process, so the only safe handle is /proc: every tunnel-core child's cmdline
      * is the libaether.so absolute path.
      */
     private fun reapOrphanedCores() {
@@ -409,7 +424,7 @@ class NimbusVpnService : VpnService() {
             try {
                 val cmdline = File(procDir, "cmdline").readText()
                 if (cmdline.contains("libaether.so")) {
-                    Log.w(TAG, "reaping orphaned Aether core pid=$pid")
+                    Log.w(TAG, "reaping orphaned Tunnel core pid=$pid")
                     android.os.Process.killProcess(pid)
                 }
                 // Never touch the zygote/app process itself.
@@ -463,7 +478,7 @@ class NimbusVpnService : VpnService() {
         session: Long,
     ): Boolean {
         val builder = Builder()
-            .setSession("Nimbus VPN")
+            .setSession("VoidrauVPN")
             .setMtu(tunMtu)
             // setBlocking(false): the old build passed the kill-switch flag
             // here; blocking while the VPN recloses during core restarts is
@@ -755,7 +770,7 @@ class NimbusVpnService : VpnService() {
                 true
             }
             if (!alive) {
-                lastCoreError = "Aether core exited"
+                lastCoreError = "Tunnel core exited"
                 emit("status", "error", lastCoreError)
                 stopTunnelQuietFail(session)
                 return
@@ -926,7 +941,7 @@ class NimbusVpnService : VpnService() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Nimbus VPN", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(CHANNEL, "VoidrauVPN", NotificationManager.IMPORTANCE_LOW),
             )
         }
         val launch = packageManager.getLaunchIntentForPackage(packageName)
@@ -940,7 +955,7 @@ class NimbusVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE,
         )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL)
-            .setContentTitle("Nimbus VPN")
+            .setContentTitle("VoidrauVPN")
             .setContentText("Protected")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pi)

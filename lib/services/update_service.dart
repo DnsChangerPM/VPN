@@ -10,19 +10,24 @@ import 'package:path_provider/path_provider.dart';
 import '../app_info.dart';
 import '../models/engine_state.dart';
 
+/// Reads the latest GitHub Release of [AppInfo.repoUrl].
+///
+/// The result drives a *mandatory* update: any release newer than the running
+/// build takes the app out of service, so every failure mode is reported
+/// explicitly through [UpdateInfo.checkFailed] instead of silently looking
+/// "up to date" — a network blip must never be mistaken for a green light.
 class UpdateService {
-  static const owner = AppInfo.githubOwner;
-  static const repo = AppInfo.githubRepo;
+  static const owner = AppInfo.owner;
+  static const repo = AppInfo.repo;
   static final latestUri =
       Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest');
-  static const githubHtml = 'https://github.com/$owner/$repo/releases';
+  static const githubHtml = AppInfo.releasesUrl;
   static final _allowedHost = 'github.com';
   static final _allowedPrefix =
       'https://github.com/$owner/$repo/releases/download/';
-  static final _objectsPrefix =
-      'https://objects.githubusercontent.com/';
+  static final _objectsPrefix = 'https://objects.githubusercontent.com/';
 
-  Future<UpdateInfo> check() async {
+  Future<UpdateInfo> check({Duration timeout = const Duration(seconds: 20)}) async {
     final info = await PackageInfo.fromPlatform();
     final current = info.version.isEmpty ? AppInfo.version : info.version;
     try {
@@ -30,10 +35,11 @@ class UpdateService {
         latestUri,
         headers: {
           'Accept': 'application/vnd.github+json',
-          'User-Agent': 'NimbusVPN/$current',
+          'User-Agent': 'VoidrauVPN/$current',
         },
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(timeout);
       if (res.statusCode == 404) {
+        // No release published yet: nothing to enforce.
         return UpdateInfo(current: current, latest: current, htmlUrl: githubHtml);
       }
       if (res.statusCode != 200) {
@@ -98,14 +104,19 @@ class UpdateService {
         available: _isNewer(latest, current),
       );
     } catch (_) {
-      return UpdateInfo(current: current, htmlUrl: githubHtml);
+      return UpdateInfo(
+        current: current,
+        latest: current,
+        htmlUrl: githubHtml,
+        checkFailed: true,
+      );
     }
   }
 
   Future<Map<String, String>> _loadSums(String url) async {
     try {
       final res = await http.get(Uri.parse(url), headers: {
-        'User-Agent': 'NimbusVPN/${AppInfo.version}',
+        'User-Agent': 'VoidrauVPN/${AppInfo.version}',
       }).timeout(const Duration(seconds: 15));
       if (res.statusCode != 200) return {};
       return parseSha256Sums(res.body);
@@ -160,7 +171,7 @@ class UpdateService {
     final client = HttpClient();
     try {
       final req = await client.getUrl(Uri.parse(url));
-      req.headers.set('User-Agent', 'NimbusVPN/${AppInfo.version}');
+      req.headers.set('User-Agent', 'VoidrauVPN/${AppInfo.version}');
       final res = await req.close();
       if (res.statusCode != 200) {
         throw HttpException('download ${res.statusCode}');
@@ -187,6 +198,8 @@ class UpdateService {
       client.close(force: true);
     }
   }
+
+  static bool isNewer(String latest, String current) => _isNewer(latest, current);
 
   static bool _isNewer(String latest, String current) {
     List<int> parts(String v) => v

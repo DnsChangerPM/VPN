@@ -94,6 +94,9 @@ object NimbusPlugin {
                         .edit()
                         .putBoolean("autoConnect", args["autoConnect"] == true)
                         .putBoolean(NimbusVpnService.EXTRA_LAN_SHARE, args["lanShare"] == true)
+                        // A retired build: the tunnel must stay down even when
+                        // started from the tile or the boot receiver.
+                        .putBoolean("blocked", args["blocked"] == true)
                         .apply()
                     result.success(null)
                 }

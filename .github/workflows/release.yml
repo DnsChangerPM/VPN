@@ -35,6 +35,7 @@ env:
   JAVA_VERSION: "17"
   AETHER_TAG: "v2.0.0"
   HEV_TAG: "2.17.1"
+  CHANNEL_URL: "https://t.me/Voidrau"
 
 jobs:
   version:
@@ -72,7 +73,7 @@ jobs:
             echo "${NOTES}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "Building Nimbus VPN v${VERSION}"
+          echo "Building VoidrauVPN v${VERSION}"
 
   android:
     needs: version
@@ -100,7 +101,7 @@ jobs:
       - name: Stamp version
         run: python3 scripts/stamp_version.py "${{ needs.version.outputs.version }}"
       - name: Scaffold Android platform
-        run: flutter create . --project-name nimbus --org pm.dnschanger --platforms=android
+        run: flutter create . --project-name voidrauvpn --org pm.dnschanger --platforms=android
       - name: Apply overlays
         run: python3 scripts/apply_overlays.py
       - name: Sanitize Gradle properties (AGP 8.1+ fix)
@@ -114,7 +115,7 @@ jobs:
           cat android/gradle.properties || true
           echo "=== android/app/build.gradle.kts ==="
           cat android/app/build.gradle.kts 2>/dev/null | head -n 150 || cat android/app/build.gradle 2>/dev/null | head -n 150 || true
-      - name: Fetch Aether Android cores
+      - name: Fetch tunnel core (Android)
         run: bash scripts/fetch_cores.sh android
       - name: Build HEV JNI
         run: bash scripts/build_hev.sh
@@ -128,29 +129,29 @@ jobs:
         run: |
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
             mkdir -p android/.android-signing
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/.android-signing/nimbus.jks
-            export ANDROID_KEYSTORE_PATH="$GITHUB_WORKSPACE/android/.android-signing/nimbus.jks"
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/.android-signing/voidrauvpn.jks
+            export ANDROID_KEYSTORE_PATH="$GITHUB_WORKSPACE/android/.android-signing/voidrauvpn.jks"
           fi
           VER="${{ needs.version.outputs.version }}"
           flutter build apk --release \
             --target-platform android-arm,android-arm64,android-x64 \
-            --dart-define=NIMBUS_VERSION=$VER
+            --dart-define=VOIDRAU_VERSION=$VER
           flutter build apk --release --split-per-abi \
             --target-platform android-arm,android-arm64,android-x64 \
-            --dart-define=NIMBUS_VERSION=$VER
+            --dart-define=VOIDRAU_VERSION=$VER
           mkdir -p release
           cp build/app/outputs/flutter-apk/app-release.apk \
-            "release/Nimbus-VPN-v${VER}-Android-Universal.apk"
+            "release/VoidrauVPN-v${VER}-Android-Universal.apk"
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
-            "release/Nimbus-VPN-v${VER}-Android-armeabi-v7a.apk"
+            "release/VoidrauVPN-v${VER}-Android-armeabi-v7a.apk"
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
-            "release/Nimbus-VPN-v${VER}-Android-arm64-v8a.apk"
+            "release/VoidrauVPN-v${VER}-Android-arm64-v8a.apk"
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk \
-            "release/Nimbus-VPN-v${VER}-Android-x86_64.apk"
+            "release/VoidrauVPN-v${VER}-Android-x86_64.apk"
           flutter build appbundle --release \
-            --dart-define=NIMBUS_VERSION=$VER
+            --dart-define=VOIDRAU_VERSION=$VER
           cp build/app/outputs/bundle/release/app-release.aab \
-            "release/Nimbus-VPN-v${VER}-Android.aab"
+            "release/VoidrauVPN-v${VER}-Android.aab"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
@@ -187,10 +188,10 @@ jobs:
       - name: Stamp version
         run: python scripts/stamp_version.py "${{ needs.version.outputs.version }}"
       - name: Scaffold Windows platform
-        run: flutter create . --project-name nimbus --org pm.dnschanger --platforms=windows
+        run: flutter create . --project-name voidrauvpn --org pm.dnschanger --platforms=windows
       - name: Apply overlays
         run: python scripts/apply_overlays.py
-      - name: Fetch Aether Windows core
+      - name: Fetch tunnel core (Windows)
         shell: bash
         run: bash scripts/fetch_cores.sh windows
       - name: Verify Windows sidecars
@@ -228,7 +229,7 @@ jobs:
       - name: Build Windows
         env:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
-        run: flutter build windows --release --dart-define=NIMBUS_VERSION=${{ needs.version.outputs.version }}
+        run: flutter build windows --release --dart-define=VOIDRAU_VERSION=${{ needs.version.outputs.version }}
       - name: Stage sidecars
         shell: pwsh
         run: |
@@ -239,7 +240,7 @@ jobs:
           Get-ChildItem $out -Filter *.dll | Select-Object Name, Length | Format-Table -AutoSize
           New-Item -ItemType Directory -Force release | Out-Null
           $ver = "${{ needs.version.outputs.version }}"
-          Compress-Archive -Path "$out\*" -DestinationPath "release\Nimbus-VPN-v$ver-Windows-x64-Portable.zip" -Force
+          Compress-Archive -Path "$out\*" -DestinationPath "release\VoidrauVPN-v$ver-Windows-x64-Portable.zip" -Force
           # Export an ABSOLUTE path: ISCC resolves relative Source paths against
           # the script directory (scripts\), not the workspace root.
           echo "OUT=$((Resolve-Path $out).Path)" >> $env:GITHUB_ENV
@@ -263,7 +264,7 @@ jobs:
             throw "Flutter build output directory not found: $buildDir"
           }
           $buildDir = (Resolve-Path $buildDir).Path
-          & $iscc "/DMyAppVersion=$ver" "/DBuildDir=$buildDir" scripts\nimbus.iss
+          & $iscc "/DMyAppVersion=$ver" "/DBuildDir=$buildDir" scripts\voidrau.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
           Get-ChildItem release
       - uses: actions/upload-artifact@v4
@@ -296,30 +297,37 @@ jobs:
           ls -la release
           USER_NOTES="${NOTES_BODY:-}"
           NOTES=$(cat <<EOF
-          ## Nimbus VPN v${VERSION}
-
-          Independent Flutter client for [CluvexStudio/Aether](https://github.com/CluvexStudio/Aether) **${AETHER_TAG}**.
+          ## VoidrauVPN v${VERSION}
 
           ${USER_NOTES}
 
-          ### Downloads
-          - \`Nimbus-VPN-v${VERSION}-Android-Universal.apk\` — Android 7.0 (API 24) and newer (all ABIs)
-          - \`Nimbus-VPN-v${VERSION}-Android-arm64-v8a.apk\` — 64-bit ARM (most phones)
-          - \`Nimbus-VPN-v${VERSION}-Android-armeabi-v7a.apk\` — 32-bit ARM
-          - \`Nimbus-VPN-v${VERSION}-Android-x86_64.apk\` — 64-bit x86 emulators
-          - \`Nimbus-VPN-v${VERSION}-Android.aab\` — Play App Bundle
-          - \`Nimbus-VPN-v${VERSION}-Windows-x64-Installer.exe\` — Windows 8.1 through 11 (x64)
-          - \`Nimbus-VPN-v${VERSION}-Windows-x64-Portable.zip\` — portable Windows build
+          > **Important:** as soon as a release is published, older builds stop
+          > working. If you are running an older version, the app tells you to
+          > install this one — the installer, the notes and support live in the
+          > Telegram channel: ${CHANNEL_URL}
 
-          The in-app updater reads this GitHub Release.
+          ### Downloads
+          - \`VoidrauVPN-v${VERSION}-Android-Universal.apk\` — Android 7.0 (API 24) and newer (all ABIs)
+          - \`VoidrauVPN-v${VERSION}-Android-arm64-v8a.apk\` — 64-bit ARM (most phones)
+          - \`VoidrauVPN-v${VERSION}-Android-armeabi-v7a.apk\` — 32-bit ARM
+          - \`VoidrauVPN-v${VERSION}-Android-x86_64.apk\` — 64-bit x86 emulators
+          - \`VoidrauVPN-v${VERSION}-Android.aab\` — Play App Bundle
+          - \`VoidrauVPN-v${VERSION}-Windows-x64-Installer.exe\` — Windows 8.1 through 11 (x64)
+          - \`VoidrauVPN-v${VERSION}-Windows-x64-Portable.zip\` — portable Windows build
+
+          Installing over an older version keeps your settings. The in-app updater
+          reads this GitHub Release.
 
           EOF
           )
+          # The heredoc body keeps the workflow's indentation; strip it so the
+          # notes render as Markdown (and read cleanly inside the app).
+          NOTES=$(printf '%s\n' "$NOTES" | sed -e 's/^ *//')
           PREFLAG=()
           if [[ "$PRE" == "true" ]]; then PREFLAG=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
-            gh release edit "$TAG" --title "Nimbus VPN v${VERSION}" --notes "$NOTES" ${PREFLAG[@]+"${PREFLAG[@]}"}
+            gh release edit "$TAG" --title "VoidrauVPN v${VERSION}" --notes "$NOTES" ${PREFLAG[@]+"${PREFLAG[@]}"}
           else
-            gh release create "$TAG" release/* --title "Nimbus VPN v${VERSION}" --notes "$NOTES" ${PREFLAG[@]+"${PREFLAG[@]}"}
+            gh release create "$TAG" release/* --title "VoidrauVPN v${VERSION}" --notes "$NOTES" ${PREFLAG[@]+"${PREFLAG[@]}"}
           fi

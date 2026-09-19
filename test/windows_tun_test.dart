@@ -1,16 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nimbus/services/windows_tun.dart';
+import 'package:voidrauvpn/services/windows_tun.dart';
 
 /// Real `netsh interface ipv4 show interfaces` output: a localized-free header,
 /// a padded separator line, names with spaces, a multi-word state, and the
-/// "Nimbus 2" rename Windows hands out when a stale adapter is still around.
+/// "Voidrau 2" rename Windows hands out when a stale adapter is still around.
 const _netshInterfaces = '''
    Idx     Met         MTU          State                Name
 ---  ----------  ----------  ------------  ---------------------------
   1         75  4294967295  connected     Loopback Pseudo-Interface 1
  12         25        1500  connected     Ethernet
  19          5        1400  hardware not present  Bluetooth Network Connection
- 23         15        1400  connected     Nimbus 2
+ 23         15        1400  connected     Voidrau 2
 ''';
 
 const _whoamiElevated = '''
@@ -51,7 +51,7 @@ const _routePrintFullOnLink = '''
 ===========================================================================
 Interface List
   12...1a-2b-3c-4d-5e-6f ..................................Ethernet
-  42...aa-bb-cc-dd-ee-ff ..................................Nimbus
+  42...aa-bb-cc-dd-ee-ff ..................................Voidrau
   ...........................
 ===========================================================================
 IPv4 Route Table
@@ -113,11 +113,11 @@ void main() {
       expect(rows[2].name, 'Bluetooth Network Connection');
     });
 
-    test('finds the adapter Windows renamed to "Nimbus 2"', () {
+    test('finds the adapter Windows renamed to "Voidrau 2"', () {
       final rows = Netsh.parseInterfaces(_netshInterfaces);
-      final adapter = Netsh.findAdapter(rows, 'Nimbus');
+      final adapter = Netsh.findAdapter(rows, 'Voidrau');
       expect(adapter, isNotNull);
-      expect(adapter!.name, 'Nimbus 2');
+      expect(adapter!.name, 'Voidrau 2');
       expect(adapter.index, 23);
     });
 
@@ -125,16 +125,16 @@ void main() {
       final rows = Netsh.parseInterfaces('''
    Idx     Met         MTU          State                Name
 ---  ----------  ----------  ------------  ---------------------------
- 31         15        1400  connected     Nimbus
- 23         15        1400  connected     Nimbus 2
+ 31         15        1400  connected     Voidrau
+ 23         15        1400  connected     Voidrau 2
 ''');
-      expect(Netsh.findAdapter(rows, 'Nimbus')!.index, 31);
+      expect(Netsh.findAdapter(rows, 'Voidrau')!.index, 31);
     });
 
     test('reports a missing adapter as missing', () {
       final rows = Netsh.parseInterfaces(_netshInterfaces);
       expect(Netsh.findAdapter(rows, 'WireGuard'), isNull);
-      expect(Netsh.findAdapter(const [], 'Nimbus'), isNull);
+      expect(Netsh.findAdapter(const [], 'Voidrau'), isNull);
     });
 
     test('ignores the header and separator lines', () {
@@ -345,30 +345,30 @@ HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion
   group('hev config', () {
     test('carries adapter name, MTU and the SOCKS5 listener', () {
       final yaml = HevConfig.yaml(
-        adapterName: 'Nimbus',
+        adapterName: 'Voidrau',
         mtu: 1400,
         socksPort: 1819,
       );
-      expect(yaml, contains('name: Nimbus'));
+      expect(yaml, contains('name: Voidrau'));
       expect(yaml, contains('mtu: 1400'));
       expect(yaml, contains('port: 1819'));
       expect(yaml, contains("address: '127.0.0.1'"));
       expect(yaml, contains("udp: 'udp'"));
     });
 
-    test('leaves the address to Nimbus so both bridges are configured alike',
+    test('leaves the address to Voidrau so both bridges are configured alike',
         () {
       // hev would stamp a /32 on the adapter and fight the /30 the routing
       // code installs; the config must not contain tunnel.ipv4.
       final yaml = HevConfig.yaml(
-        adapterName: 'Nimbus',
+        adapterName: 'Voidrau',
         mtu: 1400,
         socksPort: 1819,
       );
       expect(yaml, isNot(contains('ipv4')));
       expect(
         HevConfig.yaml(
-          adapterName: 'Nimbus',
+          adapterName: 'Voidrau',
           mtu: 1400,
           socksPort: 1819,
           ipv6: true,

@@ -1,13 +1,13 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nimbus/models/settings.dart';
-import 'package:nimbus/services/aether_args.dart';
-import 'package:nimbus/services/update_service.dart';
+import 'package:voidrauvpn/models/settings.dart';
+import 'package:voidrauvpn/services/core_args.dart';
+import 'package:voidrauvpn/services/update_service.dart';
 
 void main() {
   test('MASQUE env carries protocol, scan, socks and config', () {
-    final env = AetherLaunch.environment(
+    final env = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.masque, scan: ScanMode.turbo),
       configPath: '/tmp/aether.toml',
     );
@@ -21,13 +21,13 @@ void main() {
   });
 
   test('unknown obfuscation falls back to a documented profile', () {
-    expect(AetherLaunch.noizeFor(Protocol.gool, 'auto'), 'balanced');
-    expect(AetherLaunch.noizeFor(Protocol.masque, 'auto'), 'balanced');
-    expect(AetherLaunch.noizeFor(Protocol.masque, 'aggressive'), 'aggressive');
+    expect(CoreLaunch.noizeFor(Protocol.gool, 'auto'), 'balanced');
+    expect(CoreLaunch.noizeFor(Protocol.masque, 'auto'), 'balanced');
+    expect(CoreLaunch.noizeFor(Protocol.masque, 'aggressive'), 'aggressive');
   });
 
   test('HTTP/2 carrier enables fragment env only when requested', () {
-    final h2Frag = AetherLaunch.environment(
+    final h2Frag = CoreLaunch.environment(
       VpnSettings(
         protocol: Protocol.masque,
         transport: MasqueTransport.h2,
@@ -37,7 +37,7 @@ void main() {
     );
     expect(h2Frag['AETHER_MASQUE_HTTP2'], '1');
     expect(h2Frag['AETHER_MASQUE_H2_FRAGMENT'], '1');
-    final h3 = AetherLaunch.environment(
+    final h3 = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.masque),
       configPath: '/tmp/aether.toml',
     );
@@ -45,14 +45,14 @@ void main() {
   });
 
   test('wg and gool carry keepalive; masque carries MTU', () {
-    final wg = AetherLaunch.environment(
+    final wg = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.wg, keepalive: 15),
       configPath: '/tmp/aether.toml',
     );
     expect(wg['AETHER_PROTOCOL'], 'wg');
     expect(wg['AETHER_WG_KEEPALIVE'], '15');
     expect(wg.containsKey('AETHER_MASQUE_MTU'), isFalse);
-    final masque = AetherLaunch.environment(
+    final masque = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.masque, tunMtu: 2000),
       configPath: '/tmp/aether.toml',
     );
@@ -61,7 +61,7 @@ void main() {
   });
 
   test('IP version env tokens match the core grammar', () {
-    String token(IpVersion v) => AetherLaunch.environment(
+    String token(IpVersion v) => CoreLaunch.environment(
           VpnSettings(ipVersion: v),
           configPath: '/tmp/aether.toml',
         )['AETHER_IP']!;
@@ -71,13 +71,13 @@ void main() {
   });
 
   test('peer goes to the right env var per protocol', () {
-    final masque = AetherLaunch.environment(
+    final masque = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.masque, endpoint: '162.159.192.1:443'),
       configPath: '/tmp/aether.toml',
     );
     expect(masque['AETHER_PEER'], '162.159.192.1:443');
     expect(masque.containsKey('AETHER_WG_PEER'), isFalse);
-    final wg = AetherLaunch.environment(
+    final wg = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.wg, endpoint: '162.159.192.1:2408'),
       configPath: '/tmp/aether.toml',
     );
@@ -86,7 +86,7 @@ void main() {
   });
 
   test('smart protocol maps to masque for the engine override', () {
-    final env = AetherLaunch.environment(
+    final env = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.smart),
       override: Protocol.smart,
       configPath: '/tmp/aether.toml',
@@ -95,7 +95,7 @@ void main() {
   });
 
   test('environment lines serialise as KEY=VALUE', () {
-    final lines = AetherLaunch.environmentLines(
+    final lines = CoreLaunch.environmentLines(
       VpnSettings(protocol: Protocol.gool),
       configPath: 'aether.toml',
     );
@@ -105,7 +105,7 @@ void main() {
   });
 
   test('LAN share only widens the bind on Windows', () {
-    final env = AetherLaunch.environment(
+    final env = CoreLaunch.environment(
       VpnSettings(lanShare: true, socksPort: 1900),
       configPath: '/tmp/aether.toml',
     );
@@ -123,17 +123,17 @@ void main() {
   });
 
   test('smart ladder walks transports', () {
-    expect(AetherLaunch.smartLadder(VpnSettings()).length, greaterThan(3));
+    expect(CoreLaunch.smartLadder(VpnSettings()).length, greaterThan(3));
   });
 
   test('SHA256SUMS parser', () {
     const body = '''
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Nimbus-VPN-v1.2.3-Android-Universal.apk
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *Nimbus-VPN-v1.2.3-Windows-x64-Installer.exe
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  VoidrauVPN-v1.2.3-Android-Universal.apk
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *VoidrauVPN-v1.2.3-Windows-x64-Installer.exe
 ''';
     final map = UpdateService.parseSha256Sums(body);
-    expect(map['nimbus-vpn-v1.2.3-android-universal.apk'], startsWith('aaaa'));
-    expect(map['nimbus-vpn-v1.2.3-windows-x64-installer.exe'], startsWith('bbbb'));
+    expect(map['voidrauvpn-v1.2.3-android-universal.apk'], startsWith('aaaa'));
+    expect(map['voidrauvpn-v1.2.3-windows-x64-installer.exe'], startsWith('bbbb'));
   });
 
   test('advanced settings roundtrip', () {

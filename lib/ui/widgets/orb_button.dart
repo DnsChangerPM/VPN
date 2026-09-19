@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../models/engine_state.dart';
-import '../../theme/nimbus_theme.dart';
+import '../../theme/voidrau_theme.dart';
 
 class OrbButton extends StatefulWidget {
   const OrbButton({
@@ -52,7 +52,7 @@ class _OrbButtonState extends State<OrbButton>
         : connected
             ? const [Color(0xFF2AE5F5), Color(0xFF0867E8), Color(0xFF082E83)]
             : busy
-                ? const [NimbusColors.cyan, NimbusColors.violet, NimbusColors.blue]
+                ? const [VoidrauColors.cyan, VoidrauColors.violet, VoidrauColors.blue]
                 : const [Color(0xFFFF7680), Color(0xFF9D152C)];
 
     final inner = Column(
@@ -103,7 +103,7 @@ class _OrbButtonState extends State<OrbButton>
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: (connected ? NimbusColors.cyan : NimbusColors.coral)
+                    color: (connected ? VoidrauColors.cyan : VoidrauColors.coral)
                         .withValues(alpha: 0.35),
                     blurRadius: 42,
                     spreadRadius: 2,

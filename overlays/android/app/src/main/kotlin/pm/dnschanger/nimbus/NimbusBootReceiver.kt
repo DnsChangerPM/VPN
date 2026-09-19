@@ -15,6 +15,8 @@ class NimbusBootReceiver : BroadcastReceiver() {
         }
         val prefs = context.getSharedPreferences(NimbusVpnService.PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean("autoConnect", false)) return
+        // A retired build never reconnects itself.
+        if (prefs.getBoolean("blocked", false)) return
         val start = Intent(context, NimbusVpnService::class.java)
             .setAction(NimbusVpnService.ACTION_START)
         if (Build.VERSION.SDK_INT >= 26) {

@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import '../app_info.dart';
 import '../l10n/strings.dart';
+import '../services/links.dart';
 import '../models/engine_state.dart';
 import '../services/vpn_controller.dart';
-import '../theme/nimbus_theme.dart';
+import '../theme/voidrau_theme.dart';
 import 'pages/about_page.dart';
 import 'pages/config_page.dart';
 import 'pages/connect_page.dart';
 import 'pages/diagnostics_page.dart';
 import 'pages/settings_page.dart';
+import 'widgets/telegram_button.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key, required this.controller});
@@ -42,7 +44,7 @@ class _HomeShellState extends State<HomeShell> {
           drawer: _Drawer(
             s: s,
             index: index,
-            version: c.update?.current ?? '1.0.0',
+            version: c.update?.current ?? AppInfo.version,
             hasUpdate: c.update?.available == true,
             phase: c.snapshot.phase,
             onSelect: (i) {
@@ -53,14 +55,15 @@ class _HomeShellState extends State<HomeShell> {
           appBar: AppBar(
             title: Text(titles[index]),
             actions: [
-              IconButton(
-                tooltip: s.telegram,
-                onPressed: () => launchUrl(
-                  Uri.parse('https://t.me/CluvexStudio'),
-                  mode: LaunchMode.externalApplication,
+              // Top-right Telegram mark: opens the official channel, where new
+              // versions and their notes are published.
+              Center(
+                child: TelegramButton(
+                  tooltip: '${s.telegram} · ${AppInfo.telegramHandle}',
+                  onPressed: () => Links.openTelegram(),
                 ),
-                icon: const Icon(Icons.send, color: NimbusColors.cyan),
               ),
+              const SizedBox(width: 6),
             ],
           ),
           body: IndexedStack(
@@ -102,12 +105,12 @@ class _Drawer extends StatelessWidget {
       final active = index == i;
       return ListTile(
         selected: active,
-        leading: Icon(icon, color: active ? NimbusColors.cyan : NimbusColors.muted),
+        leading: Icon(icon, color: active ? VoidrauColors.cyan : VoidrauColors.muted),
         title: Text(label),
         trailing: badge
             ? const CircleAvatar(
                 radius: 10,
-                backgroundColor: NimbusColors.coral,
+                backgroundColor: VoidrauColors.coral,
                 child: Text('1', style: TextStyle(fontSize: 11, color: Colors.white)),
               )
             : null,
@@ -134,16 +137,26 @@ class _Drawer extends StatelessWidget {
             item(3, Icons.terminal, s.navDiag),
             item(4, Icons.info_outline, s.navAbout),
             const Spacer(),
+            const Divider(),
+            ListTile(
+              leading: TelegramButton(
+                size: 30,
+                onPressed: () => Links.openTelegram(),
+              ),
+              title: Text(AppInfo.telegramHandle),
+              subtitle: Text(s.telegram),
+              onTap: () => Links.openTelegram(),
+            ),
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
                   Text(
                     phase.name,
-                    style: const TextStyle(color: NimbusColors.muted),
+                    style: const TextStyle(color: VoidrauColors.muted),
                   ),
                   const Spacer(),
-                  Text('v$version', style: const TextStyle(color: NimbusColors.muted)),
+                  Text('v$version', style: const TextStyle(color: VoidrauColors.muted)),
                 ],
               ),
             ),
