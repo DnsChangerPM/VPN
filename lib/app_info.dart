@@ -22,10 +22,10 @@ class AppInfo {
   static const socksPort = 1819;
 
   /// Internal release repository — used only for version checking, never shown in UI.
-  static const owner = 'AnishtayiN';
-  static const repo = 'VoidrauVPN';
-  static const repoUrl = 'https://github.com/AnishtayiN/VoidrauVPN';
-  static const releasesUrl = 'https://github.com/AnishtayiN/VoidrauVPN/releases';
+  static const owner = 'DnsChangerPM';
+  static const repo = 'VPN';
+  static const repoUrl = 'https://github.com/DnsChangerPM/VPN';
+  static const releasesUrl = 'https://github.com/DnsChangerPM/VPN/releases';
 
   /// Official channel — install instructions and release notes are posted here.
   /// This is the only link shown to the user when an update is available.
