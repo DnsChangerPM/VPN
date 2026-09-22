@@ -59,7 +59,9 @@ class VpnSettings {
     this.notifications = true,
     this.watchdog = true,
     this.orbStyle = OrbStyle.mercury,
-    this.exitFilter = ExitFilter.off,
+    // The out-of-the-box rule is "any IP but Iran" (README, exit_filter_test):
+    // an unknown stored name must never silently disable the filter either.
+    this.exitFilter = ExitFilter.nonIran,
     this.exitPreferred = const ['DE'],
     this.exitBlocked = const ['IR'],
     this.exitAskAfter = 180,
@@ -219,7 +221,7 @@ class VpnSettings {
       notifications: json['notifications'] != false,
       watchdog: json['watchdog'] != false,
       orbStyle: parse(OrbStyle.values, 'orbStyle', OrbStyle.mercury),
-      exitFilter: parse(ExitFilter.values, 'exitFilter', ExitFilter.off),
+      exitFilter: parse(ExitFilter.values, 'exitFilter', ExitFilter.nonIran),
       exitPreferred: codes(json['exitPreferred'], const ['DE']),
       exitBlocked: codes(json['exitBlocked'], const ['IR']),
       exitAskAfter: num('exitAskAfter', 180),
