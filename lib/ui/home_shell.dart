@@ -29,7 +29,6 @@ class _HomeShellState extends State<HomeShell> {
   /// Guards the "still scanning?" dialog: the controller publishes
   /// [VpnController.exitPrompt] and the shell turns it into exactly one dialog.
   bool _asking = false;
-  bool _wgHintChecked = false;
 
   @override
   void initState() {
@@ -60,7 +59,7 @@ class _HomeShellState extends State<HomeShell> {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: VoidrauColors.cyan.withOpacity(0.15),
+                        color: VoidrauColors.cyan.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(Icons.bolt_rounded,
@@ -138,12 +137,14 @@ class _HomeShellState extends State<HomeShell> {
                       if (dontShowChecked) {
                         await prefs.setBool('wgHintDontShow', true);
                       }
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
+                      // Guard the *dialog* context with its own mounted flag:
+                      // the State's `mounted` is unrelated to dialogContext.
+                      if (dialogContext.mounted) {
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
                           SnackBar(content: Text(s.wgHintApplied)),
                         );
+                        Navigator.of(dialogContext).pop();
                       }
-                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
                     },
                     icon: const Icon(Icons.bolt_rounded, size: 18),
                     label: Text(s.wgHintUseWg),

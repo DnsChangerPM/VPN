@@ -289,7 +289,7 @@ class S {
           '• Faster handshake and lower ping\n'
           '• Better bypass on heavily filtered networks\n'
           '• Great for calls, gaming and streaming\n\n'
-          'Default exit is set to \"Any Country\" for fastest connection. '
+          'Default exit is set to "Any Country" for fastest connection. '
           'If you want the best experience on Iran networks, switch protocol to WireGuard.\n\n'
           'You can change protocol anytime in Configurations.';
   String get wgHintUseWg => isFa ? 'استفاده از وایرگارد' : 'Use WireGuard';

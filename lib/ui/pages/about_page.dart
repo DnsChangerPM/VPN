@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
 import '../../app_info.dart';
@@ -63,13 +65,33 @@ class AboutPage extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          s.isFa
+          Platform.isIOS
+              ? (s.isFa
+                  ? 'نصب و به‌روزرسانی iOS از طریق TestFlight یا App Store انجام می‌شود.'
+                  : 'iOS installation and updates are managed by TestFlight or the App Store.')
+              : s.isFa
               ? 'تمام نسخه‌های جدید، فایل نصبی و توضیحات انتشار فقط در کانال تلگرام منتشر می‌شود: ${AppInfo.telegramHandle}'
               : 'All new builds, installers and release notes are published only on the Telegram channel: ${AppInfo.telegramHandle}',
           style: const TextStyle(color: VoidrauColors.muted, height: 1.45, fontSize: 12),
         ),
         const Divider(height: 28),
 
+        if (Platform.isIOS) ...[
+          Text(s.isFa ? 'حریم خصوصی VPN' : 'VPN privacy',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(s.isFa
+              ? 'ترافیک از تونل Cloudflare WARP عبور می‌کند؛ سرویس‌دهنده آدرس IP و درخواست‌های اتصال شما را دریافت می‌کند. کلیدهای اتصال در فضای خصوصی افزونه و تنظیمات روی دستگاه نگه‌داری می‌شوند. تست اتصال با Cloudflare، Mozilla و Google و تشخیص IP با Cloudflare و در صورت نیاز ip-api انجام می‌شود. این بررسی‌ها IP خروجی شما را به مقصد می‌فرستند. گزارش‌ها در حافظهٔ اپ هستند مگر آن‌ها را کپی و به اشتراک بگذارید. این اپ وابستگی رسمی به Cloudflare ندارد.'
+              : 'Traffic uses Cloudflare WARP; the provider receives your IP and connection requests. Connection keys are stored in the extension’s private container and preferences on-device. Connectivity checks contact Cloudflare, Mozilla and Google; exit-IP checks contact Cloudflare and, if needed, ip-api. Those checks reveal your exit IP to their recipients. App diagnostics stay in memory unless you copy/share them. This app is not affiliated with Cloudflare.',
+              style: const TextStyle(color: VoidrauColors.muted, height: 1.45)),
+          const Divider(height: 28),
+        ],
+        TextButton.icon(
+          onPressed: () => showLicensePage(context: context,
+              applicationName: AppInfo.appName, applicationVersion: AppInfo.version),
+          icon: const Icon(Icons.description_outlined),
+          label: Text(s.isFa ? 'مجوزهای متن‌باز' : 'Open-source licenses'),
+        ),
         // ── the tunnel core ──
         Text(s.aboutCore, style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
@@ -83,7 +105,8 @@ class AboutPage extends StatelessWidget {
             _chip('${s.coreVersion} v${AppInfo.core}'),
             _chip('Android 7+'),
             _chip('Windows 8.1+'),
-            _chip('MIT'),
+            _chip('iOS 16+'),
+            _chip('Aether: AGPL-3.0'),
           ],
         ),
       ],

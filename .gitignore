@@ -24,3 +24,12 @@ release/
 *.pfx
 .env
 key.properties
+# iOS is generated from overlays/ios + scripts/ios (like the other platforms).
+/ios/
+*.ipa
+*.xcarchive/
+*.dSYM/
+*.p12
+*.p8
+*.mobileprovision
+native/ios-core/target/

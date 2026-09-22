@@ -15,5 +15,8 @@
   "wintun": "0.14.1",
   "min_android_api": 24,
   "min_windows": "6.3",
-  "min_windows_for_current_tun2socks": "10.0"
+  "min_windows_for_current_tun2socks": "10.0",
+  "ios_aether_revision": "0e6f6a5218e65ed4cddc68d1a71d9b9633f89e3f",
+  "ios_hev_revision": "9a06bc6e7989da54e3d32ff701ef7a7ce4995d3a",
+  "ios_rust": "1.98.0"
 }

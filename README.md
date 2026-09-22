@@ -1,6 +1,6 @@
 # VoidrauVPN
 
-Free, open-source **Flutter** VPN client for **Android 7+** and **Windows 8.1–11** — device-wide VPN or a local SOCKS5 proxy, powered by a modern multi-protocol tunnel core.
+Free, open-source **Flutter** VPN client for **Android 7+** and **Windows 8.1–11**, with an **iOS 16+ native packet-tunnel implementation and TestFlight build workflow**. iOS requires Apple signing and real-device validation; see the [iOS guide](IOS-TESTFLIGHT.md).
 
 Telegram channel (releases, install files, notes and support): **[t.me/Voidrau](https://t.me/Voidrau)**
 
@@ -48,7 +48,19 @@ requested as a launch parameter. The client enforces it instead:
 - An exit whose country cannot be determined is accepted, so a broken geo
   lookup can never become an endless re-dial loop.
 
-### Mandatory updates
+### iOS / TestFlight
+
+Use **Actions → iOS - Build and TestFlight**. Start with `upload_testflight=false`
+to compile an unsigned iPhone archive without Apple secrets. Signed uploads need
+Apple Developer membership, separate app/extension distribution profiles, and an
+App Store Connect API key. TestFlight is not a free signing workaround and does
+not publish an App Store release automatically.
+
+**Read [IOS-TESTFLIGHT.md](IOS-TESTFLIGHT.md)** for setup, secrets, platform limits,
+device tests and the **Aether AGPL distribution/licensing gate**. macOS compilation
+and actual iPhone networking must pass before calling this production-ready.
+
+### Mandatory updates (Android / Windows only)
 
 When a new version is published, **older builds stop working immediately**:
 
@@ -144,7 +156,16 @@ If no bridge can create the adapter, the app reports each bridge's exit status a
 - کاشی تنظیمات سریع و ویجت صفحه اصلی در اندروید
 - رابط فارسی و انگلیسی
 
-### به‌روزرسانی اجباری
+### iOS و TestFlight
+
+مسیر بومی iOS 16+ و workflow **iOS - Build and TestFlight** اضافه شده است.
+ابتدا با `upload_testflight=false` کامپایل را بررسی کنید؛ برای ارسال نسخهٔ امضاشده،
+حساب Apple Developer، دو profile اپ/افزونه و کلید API اپل لازم است. TestFlight هزینهٔ
+عضویت را حذف نمی‌کند. **[راهنمای کامل فارسی](IOS-TESTFLIGHT.md)** شامل Secretها، مجوز
+AGPL موتور، محدودیت‌های iOS، مراحل پنل اپل و چک‌لیست تست آیفون است. تا بیلد macOS و
+تست واقعی موفق نشوند، آماده‌بودن برای انتشار عمومی تأییدشده نیست.
+
+### به‌روزرسانی اجباری (فقط Android و Windows)
 
 به‌محض انتشار نسخه جدید، **نسخه‌های قبلی از کار می‌افتند**:
 
