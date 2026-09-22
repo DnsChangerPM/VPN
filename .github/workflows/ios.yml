@@ -133,7 +133,7 @@ jobs:
           if [ "$status" != "0" ]; then
             # Raw-log CDN is often unreachable through the API; surface the tail
             # as annotations (10/step cap) so failures are diagnosable from checks.
-            tail -n 9 build/ios/logs/native.log | sed -e 's/%/%25/g' -e 's/^/::error::native: /'
+            tail -n 40 build/ios/logs/native.log | python3 -c 'import sys; print("::error::native tail%0A" + "%0A".join(l.rstrip() for l in sys.stdin).replace("%", "%25"))'
             exit "$status"
           fi
       - name: Test shared Swift configuration
@@ -147,7 +147,7 @@ jobs:
           bash scripts/ios/archive.sh
           status=$?
           if [ "$status" != "0" ]; then
-            tail -n 9 build/ios/logs/archive.log 2>/dev/null | sed -e 's/%/%25/g' -e 's/^/::error::archive: /'
+            tail -n 40 build/ios/logs/archive.log 2>/dev/null | python3 -c 'import sys; print("::error::archive tail%0A" + "%0A".join(l.rstrip() for l in sys.stdin).replace("%", "%25"))'
             exit "$status"
           fi
       - name: Bundle corresponding source and licenses

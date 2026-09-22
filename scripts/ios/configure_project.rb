@@ -45,6 +45,9 @@ runner.build_phases.insert(0, embed)
     settings['SWIFT_VERSION'] = '5.0'
     settings['TARGETED_DEVICE_FAMILY'] = '1,2'
     settings['PRODUCT_BUNDLE_IDENTIFIER'] = target == runner ? bundle : "#{bundle}.PacketTunnel"
+    settings['PRODUCT_NAME'] = target.name
+    settings['PRODUCT_MODULE_NAME'] = target.name
+    settings['WRAPPER_EXTENSION'] = target == runner ? 'app' : 'appex'
     settings['CODE_SIGN_ENTITLEMENTS'] = "#{target.name}/#{target.name}.entitlements"
     settings['ENABLE_BITCODE'] = 'NO'
     settings['DEVELOPMENT_TEAM'] = ENV.fetch('APPLE_TEAM_ID', '')
