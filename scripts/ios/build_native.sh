@@ -48,7 +48,18 @@ xcrun libtool -static -o ../../ios/Native/libhev-socks5-tunnel.a \
   third-part/yaml/bin/libyaml.a third-part/hev-task-system/bin/libhev-task-system.a
 popd
 # Prove both actual libraries exist and have the required architecture/symbols.
-for lib in ios/Native/*.a; do lipo -verify_arch arm64 "$lib"; done
+for want in ios/Native/libvoidrau_ios_core.a ios/Native/libhev-socks5-tunnel.a; do
+  [[ -f "$want" ]] || { echo "missing $want"; exit 1; }
+done
+for lib in ios/Native/*.a; do
+  # lipo prints usage on a bare `-verify_arch arm64 file` form; -archs + match
+  # works on every Xcode and reports the actual architecture list on failure.
+  archs="$(lipo -archs "$lib")"
+  case " $archs " in
+    *" arm64 "*) echo "$lib: $archs" ;;
+    *) echo "$lib lacks arm64 (has: $archs)"; exit 1 ;;
+  esac
+done
 nm -gU ios/Native/libvoidrau_ios_core.a > ios/Native/core-symbols.txt
 grep -q ' _voidrau_core_start$' ios/Native/core-symbols.txt
 nm -gU ios/Native/libhev-socks5-tunnel.a > ios/Native/hev-symbols.txt
