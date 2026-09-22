@@ -6,8 +6,8 @@
 #endif
 
 #define MyAppName "VoidrauVPN"
-#define MyAppPublisher "AnishtayiN"
-#define MyAppURL "https://github.com/AnishtayiN/VoidrauVPN"
+#define MyAppPublisher "VoidrauVPN"
+#define MyAppURL "https://t.me/Voidrau"
 #define MyAppExeName "voidrauvpn.exe"
 
 [Setup]

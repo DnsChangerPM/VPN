@@ -140,19 +140,16 @@ class SettingsPage extends StatelessWidget {
           },
           child: Text(s.checkUpdates),
         ),
+        const SizedBox(height: 12),
+        // All updates are published on Telegram — no repository link.
+        FilledButton.tonalIcon(
+          onPressed: () => Links.openTelegram(),
+          icon: const Icon(Icons.send_rounded, size: 18),
+          label: Text('${s.openTelegram} · ${AppInfo.telegramHandle}'),
+        ),
         const SizedBox(height: 8),
-        if (c.downloading)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: LinearProgressIndicator(value: c.downloadProgress),
-          ),
-        if (u?.available == true)
-          FilledButton.tonal(
-            onPressed: c.downloadUpdate,
-            child: Text(c.downloading ? s.downloading : s.downloadUpdate),
-          ),
         TextButton.icon(
-          onPressed: () => Links.openReleases(),
+          onPressed: () => Links.openTelegram(),
           icon: const Icon(Icons.open_in_new, size: 16),
           label: Text(s.openRelease),
         ),
@@ -165,6 +162,29 @@ class SettingsPage extends StatelessWidget {
           title: Text('${s.aboutChannel} · ${AppInfo.telegramHandle}'),
           subtitle: Text(s.aboutChannelCredit),
           onTap: () => Links.openTelegram(),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: VoidrauColors.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: VoidrauColors.line),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, size: 18, color: VoidrauColors.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  s.isFa
+                      ? 'آیدی کانال: ${AppInfo.telegramHandle} — ${AppInfo.telegramUrl}'
+                      : 'Channel ID: ${AppInfo.telegramHandle} — ${AppInfo.telegramUrl}',
+                  style: const TextStyle(fontSize: 12, color: VoidrauColors.muted),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

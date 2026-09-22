@@ -77,7 +77,7 @@ class S {
   String get latestVersion => isFa ? 'آخرین نسخه' : 'Latest version';
   String get checkUpdates => isFa ? 'بررسی به‌روزرسانی' : 'Check for updates';
   String get downloadUpdate => isFa ? 'دانلود به‌روزرسانی' : 'Download update';
-  String get openRelease => isFa ? 'مشاهده در گیت‌هاب' : 'Open GitHub release';
+  String get openRelease => isFa ? 'مشاهده در تلگرام' : 'Open Telegram channel';
   String get upToDate => isFa ? 'برنامه به‌روز است' : 'You are up to date';
   String get updateAvailable => isFa ? 'نسخه جدید آماده است' : 'Update available';
   String get updateFailed => isFa ? 'بررسی ناموفق بود' : 'Update check failed';
@@ -226,8 +226,8 @@ class S {
       ? 'پس از نصب نسخه جدید، اتصال دوباره فعال می‌شود'
       : 'Connecting is re-enabled once the new version is installed';
   String get directDownload => isFa
-      ? 'دانلود مستقیم نسخه جدید'
-      : 'Download the new version directly';
+      ? 'دانلود از کانال تلگرام'
+      : 'Download from Telegram channel';
   String get downloadFromChannel => isFa
       ? 'نصب از کانال تلگرام'
       : 'Install from the Telegram channel';

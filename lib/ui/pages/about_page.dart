@@ -6,8 +6,8 @@ import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
 import '../widgets/telegram_button.dart';
 
-/// About screen: the app, its release repository and the official Telegram
-/// channel. Nothing else — no third-party projects are advertised here.
+/// About screen: the app and the official Telegram channel.
+/// No repository link is shown — all releases are on Telegram.
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key, required this.controller});
   final VpnController controller;
@@ -45,22 +45,6 @@ class AboutPage extends StatelessWidget {
         const SizedBox(height: 6),
         Text(s.aboutAppCredit,
             style: const TextStyle(color: VoidrauColors.muted, height: 1.45)),
-        const SizedBox(height: 4),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.code, color: VoidrauColors.cyan),
-          title: Text(AppInfo.repoUrl.replaceFirst('https://', '')),
-          onTap: () => Links.openRepo(),
-          trailing: const Icon(Icons.open_in_new, size: 16),
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.sell_outlined, color: VoidrauColors.cyan),
-          title: Text('${s.updates} — ${s.openRelease}'),
-          subtitle: const Text('${AppInfo.repo}/releases'),
-          onTap: () => Links.openReleases(),
-          trailing: const Icon(Icons.open_in_new, size: 16),
-        ),
         const Divider(height: 28),
 
         // ── the official channel ──
@@ -76,6 +60,13 @@ class AboutPage extends StatelessWidget {
           subtitle: Text(AppInfo.telegramUrl.replaceFirst('https://', '')),
           onTap: () => Links.openTelegram(),
           trailing: const Icon(Icons.open_in_new, size: 16),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          s.isFa
+              ? 'تمام نسخه‌های جدید، فایل نصبی و توضیحات انتشار فقط در کانال تلگرام منتشر می‌شود: ${AppInfo.telegramHandle}'
+              : 'All new builds, installers and release notes are published only on the Telegram channel: ${AppInfo.telegramHandle}',
+          style: const TextStyle(color: VoidrauColors.muted, height: 1.45, fontSize: 12),
         ),
         const Divider(height: 28),
 
