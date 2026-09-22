@@ -107,14 +107,21 @@ jobs:
           ruby scripts/ios/configure_project.rb
           cmp "$RUNNER_TEMP/project-before.pbxproj" ios/Runner.xcodeproj/project.pbxproj
           ruby scripts/ios/tests/verify_project.rb
-      - name: Analyze and test Flutter
+      - name: Flutter analyze
         run: |
+          set -euo pipefail
+          mkdir -p build/ios/logs
           # Legacy UI APIs still support the Android/Windows Flutter 3.27 pin.
           # New-SDK deprecation infos are visible but don't block an iOS archive;
           # warnings and errors remain fatal, and Linux CI keeps its strict gate.
-          flutter analyze --no-fatal-infos
-          flutter test
-          python3 -m unittest discover -s scripts/ios/tests -v
+          flutter analyze --no-fatal-infos 2>&1 | tee build/ios/logs/analyze.txt
+      - name: Flutter tests
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios/logs
+          flutter test 2>&1 | tee build/ios/logs/test.txt
+      - name: iOS contract tests
+        run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: Build native VPN libraries
         run: |
           set -euo pipefail

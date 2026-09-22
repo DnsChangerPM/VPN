@@ -104,7 +104,7 @@ class ForceUpdatePage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: VoidrauColors.surface,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: VoidrauColors.cyan.withOpacity(0.5)),
+                border: Border.all(color: VoidrauColors.cyan.withValues(alpha: 0.5)),
               ),
               child: Row(
                 children: [

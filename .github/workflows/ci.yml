@@ -43,6 +43,16 @@ jobs:
           [ "$(cat .test-status 2>/dev/null || echo 1)" = "0" ] || rc=1
           [ "$(cat .analyze-status 2>/dev/null || echo 1)" = "0" ] || rc=1
           exit "$rc"
+      - name: Upload raw analyzer and test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-findings-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            analyze.txt
+            test.txt
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Publish findings as check annotations
         if: failure()
         shell: bash
