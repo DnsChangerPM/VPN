@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'models/settings.dart';
 import 'services/vpn_controller.dart';
@@ -8,6 +10,16 @@ import 'ui/pages/force_update_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  LicenseRegistry.addLicense(() async* {
+    yield LicenseEntryWithLineBreaks(
+      const ['Aether'],
+      await rootBundle.loadString('assets/legal/Aether-AGPL-3.0.txt'),
+    );
+    yield LicenseEntryWithLineBreaks(
+      const ['hev-socks5-tunnel'],
+      await rootBundle.loadString('assets/legal/Hev-MIT.txt'),
+    );
+  });
   runApp(const VoidrauApp());
 }
 
@@ -37,6 +49,7 @@ class _VoidrauAppState extends State<VoidrauApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       controller.refreshUpdate();
+      controller.syncNativeState();
     }
   }
 

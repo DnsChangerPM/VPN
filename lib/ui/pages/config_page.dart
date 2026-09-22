@@ -1,6 +1,9 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
 import '../../models/settings.dart';
+import '../../services/ios_policy.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
 import '../widgets/country_picker.dart';
@@ -18,10 +21,13 @@ class ConfigPage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
       children: [
+        if (Platform.isIOS)
+          Text(IosPolicy.help(s.isFa),
+              style: const TextStyle(color: VoidrauColors.muted, height: 1.5)),
         _label(s.mode),
         _seg(st.mode.name, {
           'vpn': s.deviceVpn,
-          'proxy': s.socksProxy,
+          if (!Platform.isIOS) 'proxy': s.socksProxy,
         }, (v) {
           st.mode = v == 'vpn' ? ConnectionMode.vpn : ConnectionMode.proxy;
           c.persist();
@@ -176,52 +182,60 @@ class ConfigPage extends StatelessWidget {
         SwitchListTile(
           value: st.killSwitch,
           title: Text(s.killSwitch),
-          subtitle: Text(s.killSwitchHelp),
+          subtitle: Text(Platform.isIOS
+              ? (s.isFa
+                  ? 'محدودکردن مسیرها با API سیستم؛ نه Always-On و نه تضمین حفاظت بین توقف و اتصال دوباره.'
+                  : 'System route enforcement; not Always-On or guaranteed protection between stop and restart.')
+              : s.killSwitchHelp),
           onChanged: (v) {
             st.killSwitch = v;
             c.persist();
           },
         ),
-        SwitchListTile(
-          value: st.privateDns,
-          title: Text(s.privateDns),
-          onChanged: (v) {
-            st.privateDns = v;
-            c.persist();
-          },
-        ),
-        SwitchListTile(
-          value: st.lanShare,
-          title: Text(s.lanShare),
-          subtitle: Text(s.lanShareHelp),
-          onChanged: (v) {
-            st.lanShare = v;
-            c.persist();
-          },
-        ),
-        _label(s.splitTitle),
-        Text(s.splitHelp, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
-        const SizedBox(height: 8),
-        _seg(st.splitMode.name, {
-          'off': s.splitOff,
-          'include': s.splitInclude,
-          'exclude': s.splitExclude,
-        }, (v) {
-          st.splitMode = SplitMode.values.firstWhere((e) => e.name == v);
-          c.persist();
-        }, wrap: true),
-        if (st.splitMode != SplitMode.off)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: OutlinedButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => AppPickerPage(controller: c),
-                ),
-              ),
-              child: Text('${s.selectApps}  (${st.splitApps.length} ${s.selected})'),
-            ),
+        if (!Platform.isIOS)
+          SwitchListTile(
+            value: st.privateDns,
+            title: Text(s.privateDns),
+            onChanged: (v) {
+              st.privateDns = v;
+              c.persist();
+            },
           ),
+        if (!Platform.isIOS)
+          SwitchListTile(
+            value: st.lanShare,
+            title: Text(s.lanShare),
+            subtitle: Text(s.lanShareHelp),
+            onChanged: (v) {
+              st.lanShare = v;
+              c.persist();
+            },
+          ),
+        if (Platform.isAndroid) ...[
+          _label(s.splitTitle),
+          Text(s.splitHelp, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
+          const SizedBox(height: 8),
+          _seg(st.splitMode.name, {
+            'off': s.splitOff,
+            'include': s.splitInclude,
+            'exclude': s.splitExclude,
+          }, (v) {
+            st.splitMode = SplitMode.values.firstWhere((e) => e.name == v);
+            c.persist();
+          }, wrap: true),
+          if (st.splitMode != SplitMode.off)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => AppPickerPage(controller: c),
+                  ),
+                ),
+                child: Text('${s.selectApps}  (${st.splitApps.length} ${s.selected})'),
+              ),
+            ),
+        ],
         if (st.lanShare)
           Padding(
             padding: const EdgeInsets.only(top: 8),

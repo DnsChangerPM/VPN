@@ -1,0 +1,173 @@
+name: iOS - Build and TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'iOS marketing version (e.g. 1.1.0)'
+        required: true
+        default: '1.1.0'
+        type: string
+      build_number:
+        description: 'Unique increasing Apple build number; empty uses run number + attempt'
+        required: false
+        type: string
+      upload_testflight:
+        description: 'Sign and upload to App Store Connect (requires Apple secrets)'
+        default: false
+        type: boolean
+      distribution_rights_reviewed:
+        description: 'I have reviewed Aether AGPL licensing and Apple VPN/privacy/export requirements'
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'pubspec.yaml'
+      - 'overlays/ios/**'
+      - 'native/ios-core/**'
+      - 'scripts/ios/**'
+      - 'scripts/pins.json'
+      - '.github/workflows/ios.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'pm.dnschanger.voidrauvpn' }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_VERSION: ${{ inputs.version || '1.1.0' }}
+      IOS_BUILD_NUMBER: ${{ inputs.build_number || format('{0}.{1}', github.run_number, github.run_attempt) }}
+      IOS_UPLOAD: ${{ inputs.upload_testflight && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate inputs and Apple SDK
+        env:
+          RIGHTS_REVIEWED: ${{ inputs.distribution_rights_reviewed }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', os.environ['IOS_VERSION']), 'Use version x.y.z'
+          assert re.fullmatch(r'[0-9]+(?:\.[0-9]+){0,2}', os.environ['IOS_BUILD_NUMBER']), 'Invalid Apple build number'
+          assert re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', os.environ['IOS_BUNDLE_ID']), 'Invalid bundle ID'
+          if os.environ['IOS_UPLOAD'] == 'true':
+              assert os.environ.get('RIGHTS_REVIEWED') == 'true', 'Review distribution rights before upload'
+              assert re.fullmatch(r'[A-Z0-9]{10}', os.environ.get('APPLE_TEAM_ID', '')), 'Set APPLE_TEAM_ID variable'
+          PY
+          # Apple requires an accepted SDK; do not silently archive with an old one.
+          XCODE=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
+          test -n "$XCODE" || { echo '::error::Runner lacks Xcode 26; update the macOS runner image'; exit 1; }
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Build dependencies
+        run: |
+          brew install cmake ninja
+          gem install xcodeproj -v 1.27.0 --no-document
+          gem install cocoapods -v 1.16.2 --no-document
+          python3 -m venv "$RUNNER_TEMP/ios-python"
+          "$RUNNER_TEMP/ios-python/bin/pip" install Pillow==11.3.0
+          echo "$RUNNER_TEMP/ios-python/bin" >> "$GITHUB_PATH"
+      - name: Install signing material
+        if: inputs.upload_testflight
+        env:
+          IOS_SIGNING_DIR: ${{ runner.temp }}/ios-signing
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_APP_PROFILE_BASE64: ${{ secrets.IOS_APP_PROFILE_BASE64 }}
+          IOS_TUNNEL_PROFILE_BASE64: ${{ secrets.IOS_TUNNEL_PROFILE_BASE64 }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          bash scripts/ios/install_signing.sh
+          echo "IOS_SIGNING_DIR=$IOS_SIGNING_DIR" >> "$GITHUB_ENV"
+      - name: Generate iOS app and extension
+        run: bash scripts/ios/bootstrap.sh
+      - name: Verify generated Xcode targets and idempotency
+        run: |
+          cp ios/Runner.xcodeproj/project.pbxproj "$RUNNER_TEMP/project-before.pbxproj"
+          ruby scripts/ios/configure_project.rb
+          cmp "$RUNNER_TEMP/project-before.pbxproj" ios/Runner.xcodeproj/project.pbxproj
+          ruby scripts/ios/tests/verify_project.rb
+      - name: Analyze and test Flutter
+        run: |
+          # Legacy UI APIs still support the Android/Windows Flutter 3.27 pin.
+          # New-SDK deprecation infos are visible but don't block an iOS archive;
+          # warnings and errors remain fatal, and Linux CI keeps its strict gate.
+          flutter analyze --no-fatal-infos
+          flutter test
+          python3 -m unittest discover -s scripts/ios/tests -v
+      - name: Build native VPN libraries
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios/logs
+          bash scripts/ios/build_native.sh 2>&1 | tee build/ios/logs/native.log
+      - name: Test shared Swift configuration
+        run: |
+          xcrun swiftc overlays/ios/Shared/TunnelConfiguration.swift scripts/ios/tests/ConfigurationTests.swift -o "$RUNNER_TEMP/ios-config-tests"
+          "$RUNNER_TEMP/ios-config-tests"
+      - name: Archive app and embedded extension
+        run: bash scripts/ios/archive.sh
+      - name: Bundle corresponding source and licenses
+        if: inputs.upload_testflight
+        run: bash scripts/ios/package_source.sh
+      - name: Save signed IPA and corresponding source
+        if: inputs.upload_testflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoidrauVPN-iOS-${{ env.IOS_VERSION }}-${{ env.IOS_BUILD_NUMBER }}
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/source/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload to App Store Connect
+        if: inputs.upload_testflight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          API_PRIVATE_KEYS_DIR: ${{ runner.temp }}/ios-signing
+        run: |
+          set -euo pipefail
+          test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID"
+          IPA=$(find build/ios/ipa -name '*.ipa' -maxdepth 1 -print -quit)
+          test -n "$IPA"
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          echo '### Uploaded to App Store Connect' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Apple must finish processing. Configure TestFlight groups, export compliance and external beta review in App Store Connect. This is not an App Store publication.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Unsigned build result
+        if: ${{ !inputs.upload_testflight }}
+        run: |
+          echo '### Unsigned iPhone archive built successfully' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Compilation only: this archive is not installable and has not been uploaded. Enable upload_testflight after configuring Apple signing.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-build-logs-${{ github.run_number }}-${{ github.run_attempt }}
+          path: build/ios/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Remove Apple secrets and temporary keychain
+        if: always()
+        env:
+          IOS_SIGNING_DIR: ${{ runner.temp }}/ios-signing
+        run: python3 scripts/ios/cleanup_signing.py

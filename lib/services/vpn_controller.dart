@@ -12,6 +12,7 @@ import '../l10n/strings.dart';
 import '../models/engine_state.dart';
 import '../models/settings.dart';
 import 'core_args.dart';
+import 'ios_policy.dart';
 import 'platform_engine.dart';
 import 'socks_probe.dart';
 import 'update_service.dart';
@@ -158,6 +159,7 @@ class VpnController extends ChangeNotifier {
     if (raw != null) {
       settings = VpnSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     }
+    if (Platform.isIOS) IosPolicy.normalize(settings);
     _events = engine.events().listen(_onEvent, onError: (_) {});
     if (Platform.isWindows) {
       _winLogs = WindowsEngine.instance.logs.listen((line) => _log(line));
@@ -174,7 +176,7 @@ class VpnController extends ChangeNotifier {
         ..addAll(list);
       notifyListeners();
     }));
-    await _restoreForceUpdate(prefs);
+    if (!Platform.isIOS) await _restoreForceUpdate(prefs);
     // Hand the native side the retired flag before anything can start a
     // tunnel behind the UI's back (Quick Settings tile, boot receiver).
     await engine.saveNativePrefs(settings, blocked: _outdated);
@@ -185,13 +187,38 @@ class VpnController extends ChangeNotifier {
     _updateTimer = Timer.periodic(_updateInterval, (_) {
       if (settings.autoUpdate) unawaited(refreshUpdate());
     });
-    if (settings.autoConnect && !blocked) {
+    if (Platform.isIOS) await syncNativeState();
+    if (settings.autoConnect && !blocked && !snapshot.isActive) {
       await Future<void>.delayed(const Duration(milliseconds: 600));
       await toggle();
     }
   }
 
+  /// A packet tunnel outlives the Flutter process. Reattach on launch/resume
+  /// instead of automatically starting a second tunnel or showing a stale orb.
+  Future<void> syncNativeState() async {
+    if (!Platform.isIOS || busy) return;
+    try {
+      final status = await engine.status();
+      _onEvent({...status, 'type': 'status'});
+      if (status['phase'] == 'connected') {
+        final port = status['socksPort'];
+        if (port is int && port >= 1024 && port <= 65535) {
+          settings.socksPort = port;
+        }
+        _wantUp = true;
+        _userDisconnect = false;
+        _startStats();
+        _clock?.cancel();
+        _clock = Timer.periodic(const Duration(seconds: 1), (_) => notifyListeners());
+      }
+    } catch (e) {
+      _log('iOS status: $e');
+    }
+  }
+
   Future<void> persist() async {
+    if (Platform.isIOS) IosPolicy.normalize(settings);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('settings', jsonEncode(settings.toJson()));
     await engine.saveNativePrefs(settings);
@@ -220,6 +247,8 @@ class VpnController extends ChangeNotifier {
   /// of service immediately: the tunnel is torn down and connecting is refused
   /// until the new version is installed.
   Future<void> refreshUpdate({bool force = false}) async {
+    // Android/Windows releases must never retire a TestFlight build.
+    if (Platform.isIOS) return;
     final now = DateTime.now();
     final last = _lastReleaseCheck;
     if (!force && last != null && now.difference(last) < _minCheckGap) {
@@ -319,6 +348,7 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> downloadUpdate() async {
+    if (Platform.isIOS) return;
     final info = update;
     if (info == null || downloading) return;
     final url = Platform.isAndroid ? info.apkUrl : info.exeUrl;
@@ -419,6 +449,7 @@ class VpnController extends ChangeNotifier {
   /// until the exit IP belongs to a country the user accepts.
   Future<void> connect() async {
     if (busy) return;
+    if (Platform.isIOS) IosPolicy.normalize(settings);
     // Never open a tunnel on a build that has been retired.
     if (await _releaseGate()) return;
     _wantUp = true;
@@ -433,7 +464,8 @@ class VpnController extends ChangeNotifier {
       clearExit: true,
     ));
     try {
-      if (settings.mode == ConnectionMode.vpn && Platform.isAndroid) {
+      if (settings.mode == ConnectionMode.vpn &&
+          (Platform.isAndroid || Platform.isIOS)) {
         final ok = await engine.prepareVpn();
         if (!ok) {
           _set(snapshot.copyWith(
@@ -561,7 +593,16 @@ class VpnController extends ChangeNotifier {
         await engine.stop();
         continue;
       }
-      final up = await _waitConnected(proto);
+      var up = await _waitConnected(proto);
+      if (up && Platform.isIOS && _wantUp) {
+        try {
+          // Native readiness proves SOCKS; also prove the actual device route.
+          await SocksProbe.proveDevice();
+        } catch (e) {
+          up = false;
+          _set(snapshot.copyWith(phase: EnginePhase.error, message: '$e'));
+        }
+      }
       if (!_wantUp) return AttemptOutcome.failed;
       if (up) {
         final exit = await _probeExit();
@@ -842,7 +883,7 @@ class VpnController extends ChangeNotifier {
     // part (the reference client gives MASQUE 60s, then races the h2 carrier). Cutting
     // at 60s while the core is still mid-scan is what produced the endless
     // spinner and ladder churn.
-    final budget = Platform.isAndroid
+    final budget = (Platform.isAndroid || Platform.isIOS)
         ? const Duration(seconds: 210)
         : const Duration(seconds: 150);
     final deadline = DateTime.now().add(budget);
@@ -967,8 +1008,14 @@ class VpnController extends ChangeNotifier {
         (e) => e.name == event['phase'],
         orElse: () => snapshot.phase,
       );
+      final connectedAt = int.tryParse('${event['connectedAt'] ?? 0}') ?? 0;
       _set(snapshot.copyWith(
         phase: phase,
+        connectedAt: Platform.isIOS && connectedAt > 0
+            ? DateTime.fromMillisecondsSinceEpoch(connectedAt)
+            : null,
+        clearConnectedAt: Platform.isIOS && phase == EnginePhase.disconnected,
+        clearExit: Platform.isIOS && phase == EnginePhase.disconnected,
         message: event['message']?.toString() ?? snapshot.message,
         endpoint: event['endpoint']?.toString() ?? snapshot.endpoint,
         protocol: event['protocol']?.toString() ?? snapshot.protocol,
@@ -977,6 +1024,11 @@ class VpnController extends ChangeNotifier {
         uploadBytes:
             int.tryParse('${event['upload'] ?? ''}') ?? snapshot.uploadBytes,
       ));
+      if (Platform.isIOS && phase == EnginePhase.disconnected && !busy) {
+        _wantUp = false;
+        _statsTimer?.cancel();
+        _clock?.cancel();
+      }
       if (phase == EnginePhase.connected) {
         _watchdogTries = 0;
         _lastHealthy = DateTime.now();

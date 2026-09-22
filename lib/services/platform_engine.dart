@@ -13,7 +13,7 @@ import 'windows_proxy.dart';
 import 'windows_tun.dart';
 
 class PlatformEngine {
-  // Channel ids are shared with the native side (overlays/android/…/NimbusPlugin.kt).
+  // Shared by the Android plugin and overlays/ios/Runner/VPNPlugin.swift.
   static const _channel = MethodChannel('nimbus.vpn/engine');
   static const _events = EventChannel('nimbus.vpn/events');
 
@@ -25,7 +25,7 @@ class PlatformEngine {
   }
 
   Future<bool> prepareVpn() async {
-    if (!Platform.isAndroid) return true;
+    if (!Platform.isAndroid && !Platform.isIOS) return true;
     final ok = await _channel.invokeMethod<bool>('prepareVpn');
     return ok ?? false;
   }
@@ -48,7 +48,7 @@ class PlatformEngine {
       'killSwitch': settings.killSwitch,
       'bypassLan': settings.bypassLan,
     };
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       return _channel.invokeMethod('start', cfg);
     }
     if (Platform.isWindows) {
@@ -58,13 +58,15 @@ class PlatformEngine {
   }
 
   Future<void> stop() {
-    if (Platform.isAndroid) return _channel.invokeMethod('stop');
+    if (Platform.isAndroid || Platform.isIOS) {
+      return _channel.invokeMethod('stop');
+    }
     if (Platform.isWindows) return WindowsEngine.instance.stop();
     return Future.value();
   }
 
   Future<Map<String, dynamic>> status() async {
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       final map = await _channel.invokeMethod<Map>('status');
       return Map<String, dynamic>.from(map ?? {});
     }
@@ -82,7 +84,7 @@ class PlatformEngine {
 
   Future<void> recoverNetwork() async {
     if (Platform.isWindows) return WindowsEngine.instance.recover();
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       await _channel.invokeMethod('recover');
     }
   }
@@ -104,7 +106,7 @@ class PlatformEngine {
   }
 
   Future<void> openSystemVpnSettings() async {
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       await _channel.invokeMethod('openVpnSettings');
     }
   }

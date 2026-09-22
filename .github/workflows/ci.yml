@@ -96,9 +96,11 @@ jobs:
       - name: Shell syntax
         run: |
           set -euo pipefail
-          for f in scripts/*.sh; do
+          for f in scripts/*.sh scripts/ios/*.sh; do
             bash -n "$f" && echo "ok $f"
           done
+      - name: iOS configuration and signing tests
+        run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: Pins are valid and referenced
         run: |
           set -euo pipefail

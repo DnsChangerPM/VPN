@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
 import '../../app_info.dart';
@@ -53,20 +55,22 @@ class SettingsPage extends StatelessWidget {
           st.orbStyle = OrbStyle.values.firstWhere((e) => e.name == v);
           c.persist();
         }),
-        SwitchListTile(
-          value: st.notifications,
-          title: Text(s.notifications),
-          onChanged: (v) {
-            st.notifications = v;
-            c.persist();
-          },
-        ),
-        ListTile(
-          title: Text(s.battery),
-          subtitle: Text(s.batteryHelp),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => c.engine.openBatterySettings(),
-        ),
+        if (!Platform.isIOS)
+          SwitchListTile(
+            value: st.notifications,
+            title: Text(s.notifications),
+            onChanged: (v) {
+              st.notifications = v;
+              c.persist();
+            },
+          ),
+        if (Platform.isAndroid)
+          ListTile(
+            title: Text(s.battery),
+            subtitle: Text(s.batteryHelp),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => c.engine.openBatterySettings(),
+          ),
         ListTile(
           title: Text(s.vpnSettings),
           trailing: const Icon(Icons.chevron_right),
@@ -74,74 +78,83 @@ class SettingsPage extends StatelessWidget {
         ),
         const Divider(height: 32),
         Text(s.updates, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-        SwitchListTile(
-          value: st.autoUpdate,
-          title: Text(s.autoUpdates),
-          subtitle: Text(s.autoUpdatesHelp),
-          onChanged: (v) {
-            st.autoUpdate = v;
-            c.persist();
-          },
-        ),
-        SwitchListTile(
-          value: st.autoDownload,
-          title: Text(s.autoDownload),
-          onChanged: (v) {
-            st.autoDownload = v;
-            c.persist();
-          },
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Text(s.qsTile, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
-        ),
+        if (Platform.isIOS)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(s.isFa
+                ? 'نصب و به‌روزرسانی نسخهٔ iOS فقط از TestFlight یا App Store انجام می‌شود؛ فایل APK یا EXE روی آیفون نصب نمی‌شود.'
+                : 'Install and update iOS builds using TestFlight or the App Store, not APK/EXE downloads.'),
+          ),
         ListTile(
           title: Text(s.currentVersion),
           trailing: Text(u?.current ?? AppInfo.version),
         ),
-        ListTile(
-          title: Text(s.latestVersion),
-          trailing: Text(u?.latest ?? '—'),
-        ),
-        if (u?.available == true)
+        if (!Platform.isIOS) ...[
+          SwitchListTile(
+            value: st.autoUpdate,
+            title: Text(s.autoUpdates),
+            subtitle: Text(s.autoUpdatesHelp),
+            onChanged: (v) {
+              st.autoUpdate = v;
+              c.persist();
+            },
+          ),
+          SwitchListTile(
+            value: st.autoDownload,
+            title: Text(s.autoDownload),
+            onChanged: (v) {
+              st.autoDownload = v;
+              c.persist();
+            },
+          ),
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(s.updateAvailable,
-                style: const TextStyle(color: VoidrauColors.cyan)),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Text(s.qsTile, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
           ),
-        if (u?.notes.isNotEmpty == true)
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: VoidrauColors.surface,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: VoidrauColors.line),
+          ListTile(
+            title: Text(s.latestVersion),
+            trailing: Text(u?.latest ?? '—'),
+          ),
+          if (u?.available == true)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(s.updateAvailable,
+                  style: const TextStyle(color: VoidrauColors.cyan)),
             ),
-            child: Text(u!.notes, style: const TextStyle(fontSize: 13, height: 1.4)),
-          ),
-        FilledButton(
-          onPressed: () async {
-            await c.refreshUpdate(force: true);
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    c.releaseCheckFailed
-                        ? s.updateFailed
-                        : (c.update?.available == true
-                            ? s.updateAvailable
-                            : s.upToDate),
+          if (u?.notes.isNotEmpty == true)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: VoidrauColors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: VoidrauColors.line),
+              ),
+              child: Text(u!.notes, style: const TextStyle(fontSize: 13, height: 1.4)),
+            ),
+          FilledButton(
+            onPressed: () async {
+              await c.refreshUpdate(force: true);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      c.releaseCheckFailed
+                          ? s.updateFailed
+                          : (c.update?.available == true
+                              ? s.updateAvailable
+                              : s.upToDate),
+                    ),
                   ),
-                ),
-              );
-            }
-          },
-          child: Text(s.checkUpdates),
-        ),
-        const SizedBox(height: 12),
-        // All updates are published on Telegram — no repository link.
+                );
+              }
+            },
+            child: Text(s.checkUpdates),
+          ),
+          const SizedBox(height: 12),
+        ],
+        // Community links; iOS updates remain managed by Apple.
         FilledButton.tonalIcon(
           onPressed: () => Links.openTelegram(),
           icon: const Icon(Icons.send_rounded, size: 18),
