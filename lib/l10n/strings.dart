@@ -270,4 +270,32 @@ class S {
   String exitNotFound(String rule) => isFa
       ? 'خروجی $rule پیدا نشد — کشور آی‌پی خروجی را در پیکربندی تغییر دهید'
       : 'No exit matching $rule was found — change the exit IP country in Configurations';
+
+  // ── WireGuard hint (first launch) ────────────────────────────────────────
+  String get wgHintTitle => isFa
+      ? 'پیشنهاد برای اینترنت ایران'
+      : 'Recommendation for Iran';
+  String get wgHintBody => isFa
+      ? 'برای اینترنت ایران، پروتکل WireGuard معمولاً پایدارتر و سریع‌تره:\n\n'
+          '• مصرف باتری و دیتای کمتر نسبت به MASQUE\n'
+          '• اتصال سریع‌تر و پینگ پایین‌تر\n'
+          '• عبور بهتر از فیلترینگ‌های سنگین\n'
+          '• مناسب برای تماس، بازی و استریم\n\n'
+          'حالت پیش‌فرض برنامه روی «هر کشوری» (Any Country) تنظیم شده تا سریع وصل بشه. '
+          'اگر می‌خوای بهترین تجربه رو برای نت ایران داشته باشی، پروتکل رو روی WireGuard بذار.\n\n'
+          'می‌تونی بعداً از بخش پیکربندی هم پروتکل رو تغییر بدی.'
+      : 'For Iranian networks, WireGuard is usually more stable and faster:\n\n'
+          '• Lower battery and data usage than MASQUE\n'
+          '• Faster handshake and lower ping\n'
+          '• Better bypass on heavily filtered networks\n'
+          '• Great for calls, gaming and streaming\n\n'
+          'Default exit is set to \"Any Country\" for fastest connection. '
+          'If you want the best experience on Iran networks, switch protocol to WireGuard.\n\n'
+          'You can change protocol anytime in Configurations.';
+  String get wgHintUseWg => isFa ? 'استفاده از وایرگارد' : 'Use WireGuard';
+  String get wgHintSkip => isFa ? 'رد کردن' : 'Skip';
+  String get wgHintDontShow => isFa ? 'دیگه نشون نده' : "Don't show again";
+  String get wgHintApplied => isFa
+      ? 'پروتکل روی WireGuard تنظیم شد'
+      : 'Protocol set to WireGuard';
 }

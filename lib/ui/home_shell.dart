@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_info.dart';
 import '../l10n/strings.dart';
+import '../models/settings.dart';
 import '../services/links.dart';
 import '../models/engine_state.dart';
 import '../services/vpn_controller.dart';
@@ -27,6 +29,135 @@ class _HomeShellState extends State<HomeShell> {
   /// Guards the "still scanning?" dialog: the controller publishes
   /// [VpnController.exitPrompt] and the shell turns it into exactly one dialog.
   bool _asking = false;
+  bool _wgHintChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Show WireGuard hint on first launch (or until "Don't show again" is checked).
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowWgHint());
+  }
+
+  Future<void> _maybeShowWgHint() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final dontShow = prefs.getBool('wgHintDontShow') ?? false;
+      if (dontShow) return;
+      if (!mounted) return;
+      final c = widget.controller;
+      final s = c.s;
+      bool dontShowChecked = false;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setState) {
+              return AlertDialog(
+                title: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: VoidrauColors.cyan.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.bolt_rounded,
+                          color: VoidrauColors.cyan, size: 22),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(s.wgHintTitle,
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                    ),
+                  ],
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: VoidrauColors.surface,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: VoidrauColors.line),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.public, size: 14, color: VoidrauColors.muted),
+                            const SizedBox(width: 6),
+                            Text(
+                              s.isFa ? 'پیش‌فرض: هر کشوری (Any Country)' : 'Default: Any Country',
+                              style: const TextStyle(fontSize: 12, color: VoidrauColors.muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(s.wgHintBody, style: const TextStyle(height: 1.6, fontSize: 13.5)),
+                      const SizedBox(height: 16),
+                      InkWell(
+                        onTap: () {
+                          setState(() => dontShowChecked = !dontShowChecked);
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: dontShowChecked,
+                              onChanged: (v) {
+                                setState(() => dontShowChecked = v ?? false);
+                              },
+                            ),
+                            Expanded(child: Text(s.wgHintDontShow)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () async {
+                      if (dontShowChecked) {
+                        await prefs.setBool('wgHintDontShow', true);
+                      }
+                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                    },
+                    child: Text(s.wgHintSkip),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      // Apply WireGuard protocol
+                      c.settings.protocol = Protocol.wg;
+                      await c.persist();
+                      if (dontShowChecked) {
+                        await prefs.setBool('wgHintDontShow', true);
+                      }
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(s.wgHintApplied)),
+                        );
+                      }
+                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                    },
+                    icon: const Icon(Icons.bolt_rounded, size: 18),
+                    label: Text(s.wgHintUseWg),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+      // If user dismissed without checking "Don't show again", we do NOT save the flag,
+      // so next app launch it will show again — exactly as requested.
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
