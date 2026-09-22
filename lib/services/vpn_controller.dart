@@ -303,20 +303,64 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> openUpdate() async {
-    // All new builds are published on the Telegram channel — open it directly.
-    final target = update?.htmlUrl ?? _outdatedUrl ?? AppInfo.telegramUrl;
-    await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+    // All user-facing update links point to Telegram — even though version check is from GitHub.
+    final info = update;
+    if (info == null) {
+      final fallback = _outdatedUrl ?? AppInfo.telegramUrl;
+      await launchUrl(Uri.parse(fallback), mode: LaunchMode.externalApplication);
+      return;
+    }
+    await downloadUpdate();
+    if (downloadedPath == null) {
+      // htmlUrl is now Telegram URL (see UpdateService), so this opens Telegram channel.
+      final target = info.htmlUrl ?? _outdatedUrl ?? AppInfo.telegramUrl;
+      await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+    }
   }
 
   Future<void> downloadUpdate() async {
-    // Direct download from a repository is removed. The only distribution
-    // point is the Telegram channel, so opening it is the expected action.
-    final target = update?.htmlUrl ?? _outdatedUrl ?? AppInfo.telegramUrl;
-    try {
+    final info = update;
+    if (info == null || downloading) return;
+    final url = Platform.isAndroid ? info.apkUrl : info.exeUrl;
+    final sha = Platform.isAndroid ? info.apkSha256 : info.exeSha256;
+    if (url == null) {
+      // No direct asset — open Telegram channel where new build is published.
+      final target = info.htmlUrl ?? _outdatedUrl ?? AppInfo.telegramUrl;
       await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+      return;
+    }
+    downloading = true;
+    downloadProgress = 0;
+    notifyListeners();
+    try {
+      final file = await updates.download(
+        url: url,
+        expectedSha256: sha,
+        onProgress: (p) {
+          downloadProgress = p;
+          notifyListeners();
+        },
+      );
+      downloadedPath = file.path;
+      if (Platform.isAndroid) {
+        final same = await engine.verifyApk(file.path);
+        if (!same) {
+          await file.delete();
+          throw const FileSystemException('APK signing certificate mismatch');
+        }
+      }
+      await engine.installUpdate(file.path);
     } catch (e) {
-      _log('open Telegram channel failed: $e');
+      _log('update download failed: $e — opening Telegram channel ${AppInfo.telegramHandle}');
       toast = '$e';
+      // On failure, fall back to Telegram channel — the only link shown to user.
+      try {
+        final target = info.htmlUrl ?? AppInfo.telegramUrl;
+        await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    } finally {
+      downloading = false;
+      notifyListeners();
     }
   }
 
