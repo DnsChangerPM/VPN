@@ -60,7 +60,10 @@ for lib in ios/Native/*.a; do
     *) echo "$lib lacks arm64 (has: $archs)"; exit 1 ;;
   esac
 done
-nm -gU ios/Native/libvoidrau_ios_core.a > ios/Native/core-symbols.txt
-grep -q ' _voidrau_core_start$' ios/Native/core-symbols.txt
-nm -gU ios/Native/libhev-socks5-tunnel.a > ios/Native/hev-symbols.txt
-grep -q ' _hev_socks5_tunnel_main_from_str$' ios/Native/hev-symbols.txt
+# Apple's nm cannot read every object Rust's newer LLVM produces ("Unknown
+# attribute kind" on compiler_builtins members). Search the archives' symbol
+# strings directly — the real proof is the Xcode link in the archive step.
+grep -a -q 'voidrau_core_start' ios/Native/libvoidrau_ios_core.a \
+  || { echo 'voidrau_core_start missing from the core library'; exit 1; }
+grep -a -q 'hev_socks5_tunnel_main_from_str' ios/Native/libhev-socks5-tunnel.a \
+  || { echo 'hev_socks5_tunnel_main_from_str missing from the bridge library'; exit 1; }
