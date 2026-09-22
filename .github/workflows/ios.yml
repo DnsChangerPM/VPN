@@ -123,10 +123,19 @@ jobs:
       - name: iOS contract tests
         run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: Build native VPN libraries
+        shell: bash
         run: |
-          set -euo pipefail
+          # +e: the runner template enables -e; capture the pipeline status first.
+          set +e -u -o pipefail
           mkdir -p build/ios/logs
           bash scripts/ios/build_native.sh 2>&1 | tee build/ios/logs/native.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" != "0" ]; then
+            # Raw-log CDN is often unreachable through the API; surface the tail
+            # as annotations (10/step cap) so failures are diagnosable from checks.
+            tail -n 9 build/ios/logs/native.log | sed -e 's/%/%25/g' -e 's/^/::error::native: /'
+            exit "$status"
+          fi
       - name: Test shared Swift configuration
         run: |
           xcrun swiftc overlays/ios/Shared/TunnelConfiguration.swift scripts/ios/tests/ConfigurationTests.swift -o "$RUNNER_TEMP/ios-config-tests"

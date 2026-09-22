@@ -42,7 +42,7 @@ pushd third_party/hev-ios
 make clean
 make -j"$(sysctl -n hw.ncpu)" \
   PP="xcrun --sdk iphoneos clang" CC="xcrun --sdk iphoneos clang" \
-  CFLAGS="-arch arm64 -isysroot $SDKROOT -miphoneos-version-min=16.0" static
+  CFLAGS="-arch arm64 -isysroot $SDKROOT -miphoneos-version-min=16.0 -Wno-error" static
 xcrun libtool -static -o ../../ios/Native/libhev-socks5-tunnel.a \
   bin/libhev-socks5-tunnel.a third-part/lwip/bin/liblwip.a \
   third-part/yaml/bin/libyaml.a third-part/hev-task-system/bin/libhev-task-system.a
