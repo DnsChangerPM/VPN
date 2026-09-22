@@ -10,7 +10,9 @@ import 'package:path_provider/path_provider.dart';
 import '../app_info.dart';
 import '../models/engine_state.dart';
 
-/// Reads the latest GitHub Release of [AppInfo.repoUrl].
+/// Checks GitHub Releases internally to know when a new build exists,
+/// but never exposes the repository link to the user — all UI surfaces
+/// point to the Telegram channel [AppInfo.telegramUrl].
 ///
 /// The result drives a *mandatory* update: any release newer than the running
 /// build takes the app out of service, so every failure mode is reported
@@ -21,7 +23,9 @@ class UpdateService {
   static const repo = AppInfo.repo;
   static final latestUri =
       Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest');
+  // Internal fallback — but UI will always show Telegram URL instead.
   static const githubHtml = AppInfo.releasesUrl;
+  static const telegramUrl = AppInfo.telegramUrl;
   static final _allowedHost = 'github.com';
   static final _allowedPrefix =
       'https://github.com/$owner/$repo/releases/download/';
@@ -40,7 +44,7 @@ class UpdateService {
       ).timeout(timeout);
       if (res.statusCode == 404) {
         // No release published yet: nothing to enforce.
-        return UpdateInfo(current: current, latest: current, htmlUrl: githubHtml);
+        return UpdateInfo(current: current, latest: current, htmlUrl: telegramUrl);
       }
       if (res.statusCode != 200) {
         throw HttpException('GitHub ${res.statusCode}');
@@ -49,7 +53,8 @@ class UpdateService {
       final tag = (json['tag_name'] ?? '').toString();
       final latest = tag.startsWith('v') ? tag.substring(1) : tag;
       final notes = (json['body'] ?? '').toString();
-      final htmlUrl = (json['html_url'] ?? githubHtml).toString();
+      // We read html_url from GitHub but we deliberately expose Telegram URL to the user.
+      // The GitHub page is only for internal version detection.
       String? apk;
       String? exe;
       String? apkSha;
@@ -100,14 +105,15 @@ class UpdateService {
         exeUrl: exe,
         apkSha256: apkSha,
         exeSha256: exeSha,
-        htmlUrl: htmlUrl,
+        // IMPORTANT: show Telegram channel to user, not GitHub link
+        htmlUrl: telegramUrl,
         available: _isNewer(latest, current),
       );
     } catch (_) {
       return UpdateInfo(
         current: current,
         latest: current,
-        htmlUrl: githubHtml,
+        htmlUrl: telegramUrl,
         checkFailed: true,
       );
     }

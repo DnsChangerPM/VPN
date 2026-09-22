@@ -9,8 +9,9 @@ import '../widgets/telegram_button.dart';
 /// Replaces the whole app once a newer release exists.
 ///
 /// Nothing here can be dismissed into the normal UI: no tunnel is started on an
-/// outdated build, and the only ways forward are installing the new version or
-/// opening the Telegram channel where it is published with its notes.
+/// outdated build, and the only way forward is installing the new version from
+/// the official Telegram channel where it is published with its notes.
+/// No repository link is shown anywhere.
 class ForceUpdatePage extends StatelessWidget {
   const ForceUpdatePage({super.key, required this.controller});
   final VpnController controller;
@@ -98,31 +99,47 @@ class ForceUpdatePage extends StatelessWidget {
             Text(s.updateRequiredTelegramLead,
                 style: const TextStyle(height: 1.6)),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                TelegramButton(
-                  size: 40,
-                  onPressed: () => Links.openTelegram(),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        AppInfo.telegramHandle,
-                        style: TextStyle(
-                            fontWeight: FontWeight.w800, fontSize: 16),
-                      ),
-                      Text(
-                        AppInfo.telegramUrl.replaceFirst('https://', ''),
-                        style: const TextStyle(
-                            color: VoidrauColors.muted, fontSize: 12),
-                      ),
-                    ],
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: VoidrauColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: VoidrauColors.cyan.withOpacity(0.5)),
+              ),
+              child: Row(
+                children: [
+                  TelegramButton(
+                    size: 40,
+                    onPressed: () => Links.openTelegram(),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          AppInfo.telegramHandle,
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 16),
+                        ),
+                        Text(
+                          AppInfo.telegramUrl.replaceFirst('https://', ''),
+                          style: const TextStyle(
+                              color: VoidrauColors.muted, fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                        SelectableText(
+                          s.isFa
+                              ? 'آیدی کانال: ${AppInfo.telegramHandle}'
+                              : 'Channel ID: ${AppInfo.telegramHandle}',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             _step('1', s.updateStep1),
@@ -138,25 +155,16 @@ class ForceUpdatePage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            if (c.downloading)
-              Column(
-                children: [
-                  LinearProgressIndicator(value: c.downloadProgress),
-                  const SizedBox(height: 6),
-                  Text(s.downloading,
-                      style: const TextStyle(
-                          color: VoidrauColors.muted, fontSize: 12)),
-                ],
-              )
-            else
-              OutlinedButton.icon(
-                onPressed: c.downloadUpdate,
-                icon: const Icon(Icons.download),
-                label: Text(s.directDownload),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(46),
-                ),
+            OutlinedButton.icon(
+              onPressed: () => Links.openTelegram(),
+              icon: const Icon(Icons.send_rounded),
+              label: Text(s.isFa
+                  ? 'دانلود از کانال تلگرام ${AppInfo.telegramHandle}'
+                  : 'Download from Telegram ${AppInfo.telegramHandle}'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(46),
               ),
+            ),
             const SizedBox(height: 10),
             TextButton.icon(
               onPressed: () => c.refreshUpdate(force: true),
@@ -194,6 +202,14 @@ class ForceUpdatePage extends StatelessWidget {
             Text(
               s.updatedToContinue,
               style: const TextStyle(color: VoidrauColors.muted, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              s.isFa
+                  ? 'برای دریافت نسخه جدید به کانال تلگرام مراجعه کنید:\n${AppInfo.telegramHandle}\n${AppInfo.telegramUrl}'
+                  : 'Get the new build from the Telegram channel:\n${AppInfo.telegramHandle}\n${AppInfo.telegramUrl}',
+              style: const TextStyle(
+                  color: VoidrauColors.muted, fontSize: 12, height: 1.5),
             ),
           ],
         ),

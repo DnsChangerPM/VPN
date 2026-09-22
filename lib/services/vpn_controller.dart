@@ -223,7 +223,7 @@ class VpnController extends ChangeNotifier {
     final now = DateTime.now();
     final last = _lastReleaseCheck;
     if (!force && last != null && now.difference(last) < _minCheckGap) {
-      return; // never hammer the GitHub API
+      return; // never hammer the update check
     }
     _lastReleaseCheck = now;
     final info = await updates.check();
@@ -296,19 +296,25 @@ class VpnController extends ChangeNotifier {
       jsonEncode({
         'version': _outdatedVersion,
         'notes': _outdatedNotes,
-        'url': _outdatedUrl ?? AppInfo.releasesUrl,
+        'url': _outdatedUrl ?? AppInfo.telegramUrl,
         'running': AppInfo.version,
       }),
     );
   }
 
   Future<void> openUpdate() async {
+    // All user-facing update links point to Telegram — even though version check is from GitHub.
     final info = update;
-    if (info == null) return;
+    if (info == null) {
+      final fallback = _outdatedUrl ?? AppInfo.telegramUrl;
+      await launchUrl(Uri.parse(fallback), mode: LaunchMode.externalApplication);
+      return;
+    }
     await downloadUpdate();
-    if (downloadedPath == null && info.htmlUrl != null) {
-      await launchUrl(Uri.parse(info.htmlUrl!),
-          mode: LaunchMode.externalApplication);
+    if (downloadedPath == null) {
+      // htmlUrl is now Telegram URL (see UpdateService), so this opens Telegram channel.
+      final target = info.htmlUrl ?? _outdatedUrl ?? AppInfo.telegramUrl;
+      await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
     }
   }
 
@@ -318,10 +324,9 @@ class VpnController extends ChangeNotifier {
     final url = Platform.isAndroid ? info.apkUrl : info.exeUrl;
     final sha = Platform.isAndroid ? info.apkSha256 : info.exeSha256;
     if (url == null) {
-      if (info.htmlUrl != null) {
-        await launchUrl(Uri.parse(info.htmlUrl!),
-            mode: LaunchMode.externalApplication);
-      }
+      // No direct asset — open Telegram channel where new build is published.
+      final target = info.htmlUrl ?? _outdatedUrl ?? AppInfo.telegramUrl;
+      await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
       return;
     }
     downloading = true;
@@ -346,8 +351,13 @@ class VpnController extends ChangeNotifier {
       }
       await engine.installUpdate(file.path);
     } catch (e) {
-      _log('update download failed: $e');
+      _log('update download failed: $e — opening Telegram channel ${AppInfo.telegramHandle}');
       toast = '$e';
+      // On failure, fall back to Telegram channel — the only link shown to user.
+      try {
+        final target = info.htmlUrl ?? AppInfo.telegramUrl;
+        await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+      } catch (_) {}
     } finally {
       downloading = false;
       notifyListeners();

@@ -4,8 +4,8 @@ import '../app_info.dart';
 
 /// Opens links in the system browser / Telegram app.
 ///
-/// Every outbound link in the app goes through here, so the only destinations
-/// the product advertises are the ones [AppInfo] defines.
+/// Every outbound link in the app goes through here, so the only destination
+/// the product advertises is the official Telegram channel defined in [AppInfo].
 class Links {
   static Future<bool> open(String url) async {
     if (url.isEmpty) return false;
@@ -16,10 +16,4 @@ class Links {
 
   /// Official VoidrauVPN channel — new releases and install instructions.
   static Future<bool> openTelegram() => open(AppInfo.telegramUrl);
-
-  /// Release page of the app repository.
-  static Future<bool> openReleases() => open(AppInfo.releasesUrl);
-
-  /// Full repository.
-  static Future<bool> openRepo() => open(AppInfo.repoUrl);
 }
