@@ -1,5 +1,5 @@
 {
-  "aether": "v2.0.0",
+  "aether": "v2.1.0",
   "aether_repo": "https://github.com/CluvexStudio/Aether",
   "hev_socks5_tunnel": "2.17.1",
   "hev_repo": "https://github.com/heiher/hev-socks5-tunnel",
@@ -16,7 +16,7 @@
   "min_android_api": 24,
   "min_windows": "6.3",
   "min_windows_for_current_tun2socks": "10.0",
-  "ios_aether_revision": "0e6f6a5218e65ed4cddc68d1a71d9b9633f89e3f",
+  "ios_aether_revision": "a9703a723dff6d820252799a2ff32bd26d6638ee",
   "ios_hev_revision": "9a06bc6e7989da54e3d32ff701ef7a7ce4995d3a",
   "ios_rust": "1.98.0"
 }

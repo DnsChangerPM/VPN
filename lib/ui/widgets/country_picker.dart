@@ -10,10 +10,11 @@ import 'flag_icon.dart';
 /// preferred / blocked list in `VpnSettings`.
 ///
 /// Only countries the flag painter knows are offered, so a selected chip can
-/// always show the flag it stands for. The tunnel core does not accept a
-/// country as a launch parameter — the controller enforces the choice by
-/// rejecting and redialling — which is why this is a preference list and not a
-/// server picker.
+/// always show the flag it stands for. The rule is handed to the core itself
+/// (`AETHER_EXIT_LOC`, core 2.1.0 enforces it server-side and re-dials when the
+/// gateway lands elsewhere) and the controller keeps the client-side check as
+/// the last word — which is why this is a rule and not a server picker: the
+/// core still chooses the gateway, the rule only says which answers count.
 class CountryPickerRow extends StatelessWidget {
   const CountryPickerRow({
     super.key,

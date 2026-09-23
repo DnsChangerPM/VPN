@@ -9,6 +9,7 @@ import '../models/engine_state.dart';
 import '../models/settings.dart';
 import 'core_args.dart';
 import 'socks_probe.dart';
+import 'split.dart';
 import 'windows_proxy.dart';
 import 'windows_tun.dart';
 
@@ -44,7 +45,7 @@ class PlatformEngine {
       'protocol': (proto == Protocol.smart ? Protocol.masque : proto).name,
       'transport': settings.transport.name,
       'socksPort': settings.socksPort,
-      'tunMtu': settings.effectiveMtu,
+      'tunMtu': settings.deviceMtu,
       'killSwitch': settings.killSwitch,
       'bypassLan': settings.bypassLan,
     };
@@ -171,6 +172,12 @@ class WindowsEngine {
   final _rangeRoutes = <String>[];
   String _runDir = '';
 
+  /// The core's own traffic counters, parsed from its `--stats` line
+  /// (`[=] up 1.2 MiB down 8.0 MiB uptime 00:01:31`). Windows has no bridge
+  /// stats API, so this is the only byte source the dashboard has there.
+  int downloadBytes = 0;
+  int uploadBytes = 0;
+
   /// WinTUN adapter name we ask for. Windows may hand back "Voidrau 2" when a
   /// stale interface of that name is still registered, so the *real* name and
   /// index are discovered after the bridge starts and used from then on.
@@ -201,6 +208,9 @@ class WindowsEngine {
         'message': message,
         'endpoint': endpoint,
         'protocol': protocol,
+        'tunBackend': tunBackend,
+        'download': downloadBytes,
+        'upload': uploadBytes,
       };
 
   /// Elevation cannot change for the lifetime of a process, so the (cheap but
@@ -301,6 +311,8 @@ class WindowsEngine {
 
     _socksPort = settings.socksPort;
     _bypassLan = settings.bypassLan;
+    downloadBytes = 0;
+    uploadBytes = 0;
     _bypass.clear();
     _lanBypass.clear();
     _rangeRoutes.clear();
@@ -391,6 +403,18 @@ class WindowsEngine {
       message = 'SOCKS5 127.0.0.1:$_socksPort (system proxy) — tap "Run as Administrator" for full device VPN';
       _emit();
       return;
+    }
+    final directRules =
+        SplitRules.coreDirectEntries(settings, windows: true);
+    final dropped = SplitRules.normalize(settings.routeDirect).length -
+        directRules.length;
+    if (dropped > 0) {
+      _logLine(
+          'split tunneling: $dropped name-based rule(s) are Android-only — '
+          'Windows needs an address (a route cannot name a domain)');
+    }
+    if (directRules.isNotEmpty) {
+      _logLine('split tunneling: direct ${directRules.join(', ')}');
     }
     final ok = await _startTun(exeDir, settings);
     if (!ok) {
@@ -557,6 +581,11 @@ class WindowsEngine {
         endpoint = ip;
         _bypass.add(ip);
       }
+      final counters = CoreStats.parse(line);
+      if (counters != null) {
+        downloadBytes = counters.downBytes;
+        uploadBytes = counters.upBytes;
+      }
       final lower = line.toLowerCase();
       if (lower.contains('error') ||
           lower.contains('failed') ||
@@ -717,10 +746,11 @@ class WindowsEngine {
       try {
         await cfg.writeAsString(HevConfig.yaml(
           adapterName: adapterBase,
-          mtu: settings.effectiveMtu,
+          mtu: settings.deviceMtu,
           socksPort: _socksPort,
           ipv6: settings.ipv6Tunnel,
           logLevel: settings.logLevel,
+          fast: settings.perfToken == 'high',
         ));
       } catch (e) {
         return _TunAttempt.fail('cannot write ${cfg.path}: $e');
@@ -735,6 +765,20 @@ class WindowsEngine {
         '-loglevel',
         'info',
       ];
+      // The Go bridge's gVisor stack keeps a fixed, small TCP window unless it
+      // is told otherwise, and a fixed window divided by the round trip is the
+      // ceiling on every download. Auto-tuning lets the stack grow the window
+      // while the connection can use it and keeps memory small when it cannot —
+      // a floor *and* a ceiling fix, for one flag.
+      if (settings.perfToken == 'high') {
+        args.addAll([
+          // Receive windows grow with what the connection can use...
+          '-tcp-auto-tuning=true',
+          // ...and the send buffer (uploads) starts at 1 MiB instead of the
+          // netstack default, which is what a high round trip makes small.
+          '-tcp-sndbuf=1MiB',
+        ]);
+      }
     }
 
     try {
@@ -784,6 +828,7 @@ class WindowsEngine {
           fatal: true);
     }
     await _bypassLanRoutes();
+    await _bypassDirectRoutes(settings);
     return _TunAttempt.success();
   }
 
@@ -813,7 +858,7 @@ class WindowsEngine {
     final mtu = await _netsh([
       'interface', 'ipv4', 'set', 'subinterface',
       '@if@',
-      'mtu=${settings.effectiveMtu}',
+      'mtu=${settings.deviceMtu}',
       'store=persistent',
     ]);
     if (mtu.exitCode != 0) _logLine('netsh set mtu: ${_out(mtu)}');
@@ -966,6 +1011,26 @@ class WindowsEngine {
     for (final row in lan) {
       await Process.run('route', ['add', row[0], 'mask', row[1], gw]);
       _lanBypass.add(row[0]);
+    }
+  }
+
+  /// Installs the routes that make the "direct" split rules work on Windows.
+  ///
+  /// A rule alone changes nothing there: the core's own socket still leaves
+  /// through the adapter, which hands the packet back to the core. Only an
+  /// address-level rule can be honoured, and only because the routing table can
+  /// be told to send that network out of the physical gateway instead — the same
+  /// mechanism the LAN bypass uses. Name-based rules stay Android-only on
+  /// purpose (see [SplitRules.coreDirectEntries]).
+  Future<void> _bypassDirectRoutes(VpnSettings settings) async {
+    final gw = _originalGw;
+    final routes = SplitRules.windowsBypassRoutes(settings);
+    if (routes.isEmpty || gw == null) return;
+    for (final row in routes) {
+      if (_lanBypass.contains(row[0])) continue;
+      await Process.run('route', ['add', row[0], 'mask', row[1], gw]);
+      _lanBypass.add(row[0]);
+      _logLine('split tunneling: ${row[0]}/${row[1]} bypasses the tunnel');
     }
   }
 

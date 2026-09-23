@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -6,6 +8,7 @@ import '../../l10n/strings.dart';
 import '../../models/engine_state.dart';
 import '../../models/settings.dart';
 import '../../services/links.dart';
+import '../../services/split.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
 import '../widgets/country_picker.dart';
@@ -110,6 +113,36 @@ class ConnectPage extends StatelessWidget {
             padding: const EdgeInsets.only(top: 8),
             child: ExitFilterBadge(controller: c),
           ),
+        // The one-tap "connect with the Iran IP" answer used to be permanent:
+        // the rule was switched off and forgotten, which is how a user ends up
+        // with "only the local IP connects". It is a pause now, and this is
+        // where it is both shown and lifted.
+        if (c.exitRulePaused)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(
+              children: [
+                Text(
+                  s.exitPausedTitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: VoidrauColors.coral, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  s.exitPausedBody,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: VoidrauColors.muted, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: c.busy ? null : c.resumeExitRule,
+                  icon: const Icon(Icons.travel_explore, size: 18),
+                  label: Text(s.exitResume),
+                ),
+              ],
+            ),
+          ),
         // Device VPN was asked for but this instance is not elevated: one tap
         // does the UAC relaunch instead of leaving the user to find the exe,
         // close the app and right-click it.
@@ -141,15 +174,39 @@ class ConnectPage extends StatelessWidget {
           child: Text(s.copyProxy),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
           child: Row(
             children: [
-              _metric(s.download, _fmt(snap.downloadBytes)),
+              // Live rate while the tunnel moves traffic, the total otherwise:
+              // a running number is what tells the user the tunnel is actually
+              // carrying their download.
+              _metric(
+                s.download,
+                connected && c.rate.downBytesPerSec > 512
+                    ? '${_rate(c.rate.downBytesPerSec)}\n${_fmt(snap.downloadBytes)}'
+                    : _fmt(snap.downloadBytes),
+              ),
               _metric(s.ping, snap.pingMs == null ? '—' : '${snap.pingMs} ms'),
-              _metric(s.upload, _fmt(snap.uploadBytes)),
+              _metric(
+                s.upload,
+                connected && c.rate.upBytesPerSec > 512
+                    ? '${_rate(c.rate.upBytesPerSec)}\n${_fmt(snap.uploadBytes)}'
+                    : _fmt(snap.uploadBytes),
+              ),
             ],
           ),
         ),
+        if (SplitRules.summary(c.settings,
+                fa: s.isFa, android: Platform.isAndroid)
+            .isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              '${s.splitTitle}: '
+              '${SplitRules.summary(c.settings, fa: s.isFa, android: Platform.isAndroid)}',
+              style: const TextStyle(color: VoidrauColors.cyan, fontSize: 11.5),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: Text(
@@ -209,10 +266,21 @@ class ConnectPage extends StatelessWidget {
         children: [
           Text(k, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
           const SizedBox(height: 4),
-          Text(v, style: const TextStyle(fontWeight: FontWeight.w700)),
+          Text(v,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
       ),
     );
+  }
+
+  /// `12.4 MB/s`, `640 KB/s`, `812 B/s`.
+  String _rate(double bytesPerSec) {
+    if (bytesPerSec < 1024) return '${bytesPerSec.round()} B/s';
+    if (bytesPerSec < 1024 * 1024) {
+      return '${(bytesPerSec / 1024).toStringAsFixed(0)} KB/s';
+    }
+    return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
 
   String _fmt(int bytes) {

@@ -352,11 +352,28 @@ class HevConfig {
     required int socksPort,
     bool ipv6 = false,
     String logLevel = 'info',
+
+    /// Speed profile: the bridge moves the packets, so the buffers it splices
+    /// through decide how much of the line the rest of the stack can use. The
+    /// core's own tier (`AETHER_PERF_PROFILE=high`) cannot help with traffic the
+    /// bridge has not handed over yet, which is why the same numbers are applied
+    /// here.
+    bool fast = false,
   }) {
+    final tcpBuffer = fast ? 131072 : 65536;
+    // The TCP splice buffer lives on the worker's own stack (upstream's rule:
+    // size + 20480), and the old fixed 32768 with a 65536 buffer was an
+    // overflow waiting to happen.
+    final stack = 20480 + tcpBuffer;
+    final udpRecv = fast ? 1048576 : 524288;
     final b = StringBuffer()
       ..writeln('misc:')
-      ..writeln('  task-stack-size: 32768')
+      ..writeln('  task-stack-size: $stack')
+      ..writeln('  tcp-buffer-size: $tcpBuffer')
+      ..writeln('  udp-recv-buffer-size: $udpRecv')
+      ..writeln('  max-session-count: 0')
       ..writeln('  connect-timeout: 15000')
+      ..writeln('  limit-nofile: 65535')
       ..writeln('  log-level: $logLevel')
       ..writeln('tunnel:')
       ..writeln('  name: $adapterName')

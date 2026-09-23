@@ -5,8 +5,11 @@ import 'package:flutter/services.dart';
 
 import '../../app_info.dart';
 import '../../data/countries.dart';
+import '../../l10n/strings.dart';
 import '../../models/engine_state.dart';
+import '../../services/core_args.dart';
 import '../../services/socks_probe.dart';
+import '../../services/split.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
 
@@ -103,7 +106,28 @@ class DiagnosticsPage extends StatelessWidget {
             _cell(s.elevated, tun['elevated'] == 'true' ? s.yes : s.no),
             _cell(s.windowsVersion, tun['windows'] ?? '—'),
           ],
-          _cell('MTU', '${c.settings.effectiveMtu}'),
+          _cell(
+            'MTU',
+            s.mtuSummary(c.settings.deviceMtu, c.settings.coreMtuOverride),
+          ),
+          _cell(s.perfProfile, c.settings.perf.name),
+          _cell(s.exitLock, CoreLaunch.exitLoc(c.settings) ?? s.off),
+          _cell(
+            s.splitTitle,
+            SplitRules.summary(c.settings,
+                    fa: s.isFa, android: Platform.isAndroid)
+                .isEmpty
+                ? s.splitNone
+                : SplitRules.summary(c.settings,
+                    fa: s.isFa, android: Platform.isAndroid),
+          ),
+          _cell(s.secondHop, c.settings.chain.name),
+          // What the tunnel is moving right now, next to the totals below.
+          _cell(
+            s.liveSpeed,
+            '${s.download} ${_rate(c.rate.downBytesPerSec)}  ·  '
+            '${s.upload} ${_rate(c.rate.upBytesPerSec)}',
+          ),
           _cell(s.exitIp, snap.ip.isEmpty ? '—' : snap.ip),
           _cell(
             s.exitCountry,
@@ -113,17 +137,26 @@ class DiagnosticsPage extends StatelessWidget {
           ),
           // The rule the controller is enforcing, plus how far the current
           // search has got — so a long "scanning" phase explains itself.
-          _cell(s.exitFilter, c.exitFilterLabel),
+          _cell(
+            s.exitFilter,
+            c.exitRulePaused
+                ? '${c.exitFilterLabel} · ${s.exitPausedTitle}'
+                : c.exitFilterLabel,
+          ),
           if (c.exitFilterActive)
             _cell(s.scanning, c.exitSearchStatus),
           _cell(s.ping, snap.pingMs == null ? '—' : '${snap.pingMs} ms'),
           _cell(s.location, snap.location.isEmpty ? '—' : snap.location),
           _cell(s.coreVersion, AppInfo.core),
+          _cell(s.httpProxy,
+              c.settings.httpProxy ? c.settings.httpBind : s.off),
           _cell('SOCKS5', c.settings.socksBind),
           _cell(s.download, '${snap.downloadBytes}'),
           _cell(s.upload, '${snap.uploadBytes}'),
           _cell(s.endpoint, snap.endpoint.isEmpty ? 'auto' : snap.endpoint),
         ]),
+        const SizedBox(height: 16),
+        _leakCard(c, s),
         const SizedBox(height: 16),
         Text(s.logs, style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
@@ -189,6 +222,90 @@ class DiagnosticsPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// The one test that answers "is the tunnel really carrying my traffic?" —
+  /// the raw line's public address next to the tunnel's.
+  Widget _leakCard(VpnController c, S s) {
+    final connected = c.snapshot.phase == EnginePhase.connected;
+    final verdict = c.leakBypassed
+        ? (Icons.report_gmailerrorred_outlined, s.leakBypassed, VoidrauColors.coral)
+        : c.leakTunnelIp.isNotEmpty
+            ? (Icons.verified_outlined, s.leakOk, VoidrauColors.cyan)
+            : (!connected
+                ? (Icons.info_outline, s.leakNoTunnel, VoidrauColors.muted)
+                : (Icons.hourglass_empty, s.leakCheckHelp, VoidrauColors.muted));
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: VoidrauColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: VoidrauColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.travel_explore,
+                  color: VoidrauColors.cyan, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(s.leakCheck,
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              TextButton(
+                onPressed: c.leakChecking ? null : c.runLeakCheck,
+                child: Text(c.leakChecking ? s.leakRunning : s.leakRun),
+              ),
+            ],
+          ),
+          _cell(
+            s.leakRaw,
+            c.leakRawIp.isEmpty
+                ? '—'
+                : '${c.leakRawIp} (${c.leakRawCountry.isEmpty ? '??' : c.leakRawCountry})',
+          ),
+          _cell(
+            s.leakThrough,
+            c.leakTunnelIp.isEmpty
+                ? (connected ? '—' : s.splitNone)
+                : '${c.leakTunnelIp} (${c.leakTunnelCountry.isEmpty ? '??' : c.leakTunnelCountry})',
+          ),
+          if (c.leakError.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(s.leakFailed,
+                  style: const TextStyle(
+                      color: VoidrauColors.muted, fontSize: 12)),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(verdict.$1, size: 16, color: verdict.$3),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(verdict.$2,
+                      style: TextStyle(color: verdict.$3, fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// `12.4 MB/s`, `640 KB/s` or `0 B/s`.
+  static String _rate(double bytesPerSec) {
+    if (bytesPerSec < 1024) return '${bytesPerSec.round()} B/s';
+    if (bytesPerSec < 1024 * 1024) {
+      return '${(bytesPerSec / 1024).toStringAsFixed(0)} KB/s';
+    }
+    return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
 
   Widget _cell(String k, String v) {

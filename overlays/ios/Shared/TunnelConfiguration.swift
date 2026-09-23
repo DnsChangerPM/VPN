@@ -20,11 +20,27 @@ struct TunnelConfiguration {
               let lines = values["env"] as? [String] else {
             throw TunnelFailure.message("Invalid or unsupported iOS VPN configuration")
         }
+        // Every key Aether 2.1.0 understands. The app's own policy decides what
+        // an iOS tunnel may actually ask for (no Psiphon/Tor binaries ship in
+        // the bundle, so chains stay off and their keys are never produced),
+        // while the native shim pins the profile and the netstack buffers to
+        // values that fit an extension's memory budget.
         let allowed: Set<String> = [
             "AETHER_PROTOCOL", "AETHER_SCAN", "AETHER_IP", "AETHER_NOIZE",
             "AETHER_SOCKS", "AETHER_CONFIG", "AETHER_QUICK_RECONNECT",
             "AETHER_LOG_LEVEL", "AETHER_MASQUE_HTTP2", "AETHER_MASQUE_MTU",
-            "AETHER_MASQUE_H2_FRAGMENT", "AETHER_WG_KEEPALIVE", "AETHER_PEER", "AETHER_WG_PEER"
+            "AETHER_MASQUE_H2_FRAGMENT", "AETHER_WG_KEEPALIVE", "AETHER_PEER", "AETHER_WG_PEER",
+            "AETHER_STATS", "AETHER_STATS_SECS",
+            "AETHER_PERF_PROFILE", "AETHER_NETSTACK_TCP_RX", "AETHER_NETSTACK_TCP_TX",
+            "AETHER_TCP_CONNECT_SECS", "AETHER_TCP_KEEPALIVE_SECS", "AETHER_HALF_CLOSE_SECS",
+            "AETHER_QUIC_V2", "AETHER_ECH",
+            "AETHER_EXIT_LOC", "AETHER_EXIT_LOC_SECS",
+            "AETHER_ROUTE_DIRECT", "AETHER_ROUTE_BLOCK",
+            "AETHER_HTTP_PROXY",
+            "AETHER_PSIPHON", "AETHER_PSIPHON_REGION", "AETHER_PSIPHON_MODE",
+            "AETHER_PSIPHON_HTTP", "AETHER_PSIPHON_BIND", "AETHER_PSIPHON_DIR",
+            "AETHER_TOR", "AETHER_TOR_COUNTRY", "AETHER_TOR_HTTP",
+            "AETHER_TOR_BIND", "AETHER_TOR_DIR"
         ]
         var env: [String: String] = [:]
         for line in lines {

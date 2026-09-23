@@ -13,6 +13,8 @@ import 'pages/config_page.dart';
 import 'pages/connect_page.dart';
 import 'pages/diagnostics_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/speed_page.dart';
+import 'pages/split_page.dart';
 import 'widgets/telegram_button.dart';
 
 class HomeShell extends StatefulWidget {
@@ -167,7 +169,15 @@ class _HomeShellState extends State<HomeShell> {
     return AnimatedBuilder(
       animation: c,
       builder: (context, _) {
-        final titles = [s.navConnect, s.navConfig, s.navSettings, s.navDiag, s.navAbout];
+        final titles = [
+          s.navConnect,
+          s.navConfig,
+          s.navSpeed,
+          s.navSplit,
+          s.navSettings,
+          s.navDiag,
+          s.navAbout,
+        ];
         final toast = c.toast;
         if (toast != null && toast.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -210,6 +220,8 @@ class _HomeShellState extends State<HomeShell> {
             children: [
               ConnectPage(controller: c),
               ConfigPage(controller: c),
+              SpeedPage(controller: c),
+              SplitPage(controller: c),
               SettingsPage(controller: c),
               DiagnosticsPage(controller: c),
               AboutPage(controller: c),
@@ -331,9 +343,11 @@ class _Drawer extends StatelessWidget {
             const Divider(),
             item(0, Icons.shield_outlined, s.navConnect),
             item(1, Icons.tune, s.navConfig),
-            item(2, Icons.settings_outlined, s.navSettings, badge: hasUpdate),
-            item(3, Icons.terminal, s.navDiag),
-            item(4, Icons.info_outline, s.navAbout),
+            item(2, Icons.speed_rounded, s.navSpeed),
+            item(3, Icons.alt_route_rounded, s.navSplit),
+            item(4, Icons.settings_outlined, s.navSettings, badge: hasUpdate),
+            item(5, Icons.terminal, s.navDiag),
+            item(6, Icons.info_outline, s.navAbout),
             const Spacer(),
             const Divider(),
             ListTile(

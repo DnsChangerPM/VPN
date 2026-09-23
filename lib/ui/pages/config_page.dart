@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 
 import '../../models/settings.dart';
 import '../../services/ios_policy.dart';
+import '../../services/split.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
 import '../widgets/country_picker.dart';
-import 'app_picker_page.dart';
+import 'split_page.dart';
 
 class ConfigPage extends StatelessWidget {
   const ConfigPage({super.key, required this.controller});
@@ -112,6 +113,9 @@ class ConfigPage extends StatelessWidget {
           'preferred': s.exitPreferred,
         }, (v) {
           st.exitFilter = ExitFilter.values.firstWhere((e) => e.name == v);
+          // Choosing a rule by hand is also the way out of the pause the
+          // one-tap answer left behind.
+          st.exitRulePaused = false;
           c.persist();
         }, wrap: true),
         if (st.exitFilter == ExitFilter.preferred) ...[
@@ -125,6 +129,14 @@ class ConfigPage extends StatelessWidget {
             },
           ),
         ],
+        if (st.exitRulePaused)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 2),
+            child: Text(
+              s.exitPausedBody,
+              style: const TextStyle(color: VoidrauColors.coral, fontSize: 12),
+            ),
+          ),
         if (st.exitFilter != ExitFilter.off) ...[
           _label(s.exitBlockedCountries),
           CountryPickerRow(
@@ -153,6 +165,15 @@ class ConfigPage extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 12),
+        SwitchListTile(
+          value: st.coreExitLoc,
+          title: Text(s.exitLock),
+          subtitle: Text(s.exitLockHelp),
+          onChanged: (v) {
+            st.coreExitLoc = v;
+            c.persist();
+          },
+        ),
         SwitchListTile(
           value: st.quickReconnect,
           title: Text(s.autoReconnect),
@@ -211,10 +232,11 @@ class ConfigPage extends StatelessWidget {
               c.persist();
             },
           ),
-        if (Platform.isAndroid) ...[
-          _label(s.splitTitle),
-          Text(s.splitHelp, style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
-          const SizedBox(height: 8),
+        _label(s.splitTitle),
+        Text(s.splitHelp,
+            style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
+        const SizedBox(height: 8),
+        if (Platform.isAndroid)
           _seg(st.splitMode.name, {
             'off': s.splitOff,
             'include': s.splitInclude,
@@ -222,20 +244,26 @@ class ConfigPage extends StatelessWidget {
           }, (v) {
             st.splitMode = SplitMode.values.firstWhere((e) => e.name == v);
             c.persist();
+            c.notifyToast(s.splitApplied);
           }, wrap: true),
-          if (st.splitMode != SplitMode.off)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: OutlinedButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => AppPickerPage(controller: c),
-                  ),
-                ),
-                child: Text('${s.selectApps}  (${st.splitApps.length} ${s.selected})'),
-              ),
-            ),
+        if (SplitRules.summary(st, fa: s.isFa, android: Platform.isAndroid)
+            .isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            SplitRules.summary(st, fa: s.isFa, android: Platform.isAndroid),
+            style: const TextStyle(color: VoidrauColors.cyan, fontSize: 12),
+          ),
         ],
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => SplitPage(controller: c)),
+            ),
+            icon: const Icon(Icons.alt_route_rounded, size: 18),
+            label: Text(s.splitTitle),
+          ),
+        ),
         if (st.lanShare)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -272,6 +300,80 @@ class ConfigPage extends StatelessWidget {
             c.persist();
           },
         ),
+        if (!Platform.isIOS) ...[
+          _label(s.secondHop),
+          Text(s.secondHopHelp,
+              style: const TextStyle(color: VoidrauColors.muted, fontSize: 12)),
+          const SizedBox(height: 8),
+          _seg(st.chain.name, {
+            'off': s.hopOff,
+            'psiphon': s.hopPsiphon,
+            'psiphonReverse': s.hopPsiphonReverse,
+            'psiphonOnly': s.hopPsiphonOnly,
+            'tor': s.hopTor,
+            'torReverse': s.hopTorReverse,
+            'torOnly': s.hopTorOnly,
+          }, (v) {
+            st.chain = ChainMode.values.firstWhere((e) => e.name == v);
+            c.persist();
+          }, wrap: true),
+          if (st.chain != ChainMode.off) ...[
+            if (st.chain.name.startsWith('psiphon')) ...[
+              _label(s.hopRegion),
+              TextFormField(
+                initialValue: st.psiphonRegion,
+                textCapitalization: TextCapitalization.characters,
+                onChanged: (v) => st.psiphonRegion = v,
+                onFieldSubmitted: (_) => c.persist(),
+                decoration: InputDecoration(
+                  helperText: s.hopRegionHelp,
+                  filled: true,
+                  fillColor: VoidrauColors.surface,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+              SwitchListTile(
+                value: st.psiphonCdn,
+                title: Text(s.hopCdn),
+                onChanged: (v) {
+                  st.psiphonCdn = v;
+                  c.persist();
+                },
+              ),
+            ] else ...[
+              _label(s.torCountry),
+              TextFormField(
+                initialValue: st.torCountry,
+                onChanged: (v) => st.torCountry = v,
+                onFieldSubmitted: (_) => c.persist(),
+                decoration: InputDecoration(
+                  helperText: s.torCountryHelp,
+                  filled: true,
+                  fillColor: VoidrauColors.surface,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+            SwitchListTile(
+              value: st.hopHttp,
+              title: Text(s.hopHttp),
+              subtitle: Text(s.hopHttpHelp),
+              onChanged: (v) {
+                st.hopHttp = v;
+                c.persist();
+              },
+            ),
+          ],
+        ],
+        SwitchListTile(
+          value: st.httpProxy,
+          title: Text(s.httpProxy),
+          subtitle: Text(s.httpProxyHelp),
+          onChanged: (v) {
+            st.httpProxy = v;
+            c.persist();
+          },
+        ),
         _label(s.advanced),
         _label(s.socksPort),
         TextFormField(
@@ -303,13 +405,14 @@ class ConfigPage extends StatelessWidget {
         TextFormField(
           initialValue: '${st.tunMtu}',
           keyboardType: TextInputType.number,
-          onChanged: (v) => st.tunMtu = int.tryParse(v) ?? 1400,
+          onChanged: (v) => st.tunMtu = int.tryParse(v) ?? 1500,
           onFieldSubmitted: (_) => c.persist(),
           decoration: InputDecoration(
             filled: true,
             fillColor: VoidrauColors.surface,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            helperText: 'effective ${st.effectiveMtu}',
+            helperText: s.mtuHelp,
+            helperMaxLines: 3,
           ),
         ),
         _label(s.logLevel),
@@ -341,6 +444,7 @@ class ConfigPage extends StatelessWidget {
             c.settings = VpnSettings(
               theme: st.theme,
               language: st.language,
+              orbStyle: st.orbStyle,
             );
             c.persist();
           },

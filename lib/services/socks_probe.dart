@@ -120,6 +120,55 @@ class SocksProbe {
     return (body: r.body, pingMs: r.pingMs);
   }
 
+  /// The public IP this machine shows **without** the tunnel, read on the raw
+  /// interface — DHCP, carrier NAT and the ISP's own transparent proxies
+  /// included.
+  ///
+  /// This is the counterpart of [exitInfo], and the only honest way to answer
+  /// "is the VPN actually carrying my traffic?": when both report the same
+  /// address, the traffic leaving the machine is the *line's*, not the exit's,
+  /// and any "exit country" shown elsewhere is really the user's own.
+  static Future<({String ip, String country, int pingMs})> rawInfo() async {
+    Object? lastError;
+    for (final target in _targets) {
+      try {
+        final sw = Stopwatch()..start();
+        // Straight to the address, no SOCKS anywhere: this has to fail if the
+        // line is filtered, because that is the answer we are after.
+        final socket = await Socket.connect(target[0], 80,
+            timeout: const Duration(seconds: 8));
+        socket.setOption(SocketOption.tcpNoDelay, true);
+        socket.write('GET ${target[1]} HTTP/1.0\r\n'
+            'Host: ${target[0]}\r\n'
+            'User-Agent: voidrau-probe\r\n\r\n');
+        await socket.flush();
+        final chunks = BytesBuilder();
+        await for (final data in socket.timeout(const Duration(seconds: 8))) {
+          chunks.add(data);
+          if (chunks.length > 8192) break;
+          final text = utf8.decode(chunks.toBytes(), allowMalformed: true);
+          if (text.contains('\r\n\r\n') && text.length > 64) break;
+        }
+        socket.destroy();
+        sw.stop();
+        final body = utf8.decode(chunks.takeBytes(), allowMalformed: true);
+        final trace = parseTrace(body);
+        final ip = (trace['ip'] ?? '').trim();
+        if (ip.isEmpty) {
+          throw const SocketException('no address in the answer');
+        }
+        return (
+          ip: ip,
+          country: countryCode(trace['loc'] ?? ''),
+          pingMs: sw.elapsedMilliseconds,
+        );
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw SocketException('raw address lookup failed: $lastError');
+  }
+
   /// Exit facts for the dashboard: the public IP the tunnel presents and the
   /// country that IP is registered in — this is the "VPN's own IP" the user
   /// sees after connecting.
@@ -315,6 +364,9 @@ class SocksProbe {
     }
   }
 
+  /// One `key=value` per line, which is what a Cloudflare trace is. Everything
+  /// around the two lines we need is tolerated: a proxy may append its own
+  /// lines, and an anonymised exit reports `loc=XX`.
   static Map<String, String> parseTrace(String body) {
     final map = <String, String>{};
     for (final line in body.split(RegExp(r'\r?\n'))) {

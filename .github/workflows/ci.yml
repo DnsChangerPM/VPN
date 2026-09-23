@@ -63,21 +63,36 @@ jobs:
           python3 - <<'PY'
           import pathlib, re
 
+          seen = {}
+
           def emit(level, text):
               text = " ".join(text.split())[:400]
-              if text:
-                  print(f"::{level}::{text}")
+              if not text:
+                  return
+              # An action's annotations are deduplicated by message, and every
+              # line here is printed from the same step: number them so a second
+              # identical finding still shows up.
+              seen[text] = seen.get(text, 0) + 1
+              print(f"::{level}::[{seen[text]}] {text}")
 
           analyze = pathlib.Path("analyze.txt")
           if analyze.exists():
-              findings = [
-                  l for l in analyze.read_text(errors="replace").splitlines()
-                  if re.search(r" (error|warning|info) • ", l)
-              ]
+              lines = analyze.read_text(errors="replace").splitlines()
+              findings = [l for l in lines if " • " in l]
               for line in findings[:60]:
                   emit("error", line)
+              # A count higher than the lines we understood means the format
+              # drifted, and the whole file is more useful than a wrong summary.
+              counted = 0
+              for line in lines:
+                  m = re.match(r"^\s*(\d+) issues? found", line)
+                  if m:
+                      counted = int(m.group(1))
+              if counted > len(findings):
+                  for line in lines[:80]:
+                      emit("error", line)
               summary = [
-                  l for l in analyze.read_text(errors="replace").splitlines()
+                  l for l in lines
                   if re.match(r"^\s*(No issues|\d+ issues? found)", l)
               ]
               for line in summary[:2]:
@@ -86,6 +101,12 @@ jobs:
           tests = pathlib.Path("test.txt")
           if tests.exists():
               body = tests.read_text(errors="replace").splitlines()
+              # A failing test prints its own block; the block is what says
+              # *why* it failed, so every failure line drags its context in.
+              context = set()
+              for i, line in enumerate(body):
+                  if re.search(r"\[E\]|failed to load|Error:", line):
+                      context.update(range(i, min(i + 14, len(body))))
               interesting = [
                   l for l in body
                   if re.search(
@@ -95,6 +116,8 @@ jobs:
                       re.I,
                   )
               ]
+              for i in sorted(context)[:120]:
+                  emit("error", body[i])
               for line in interesting[:80]:
                   emit("error", line)
           PY
