@@ -15,6 +15,8 @@ import 'core_args.dart';
 import 'ios_policy.dart';
 import 'platform_engine.dart';
 import 'socks_probe.dart';
+import 'speed.dart';
+import 'split.dart';
 import 'update_service.dart';
 import 'windows_proxy.dart';
 
@@ -131,6 +133,15 @@ class VpnController extends ChangeNotifier {
   /// Minimum gap between two *network* release checks.
   static const _minCheckGap = Duration(seconds: 45);
   static const _forceUpdateKey = 'forceUpdate';
+
+  /// How long the core gets to relocate itself when it already knows the exit
+  /// rule (`AETHER_EXIT_LOC`). Waiting is cheaper than a teardown + rescan.
+  static const exitCoreGrace = Duration(seconds: 20);
+
+  /// Live throughput, computed from whatever byte counters the engine has:
+  /// Android publishes the bridge's own through JNI, Windows parses the core's
+  /// `--stats` line. See [RateMeter].
+  final rate = RateMeter();
 
   Timer? _updateTimer;
   Timer? _statsTimer;
@@ -425,6 +436,33 @@ class VpnController extends ChangeNotifier {
     await connect();
   }
 
+  /// True when the exit rule is enforced inside the core as well, which is the
+  /// only case where waiting can replace re-dialling.
+  bool get _coreEnforcesExit =>
+      settings.coreExitLoc && CoreLaunch.exitLoc(settings) != null;
+
+  /// Waits for the core to relocate the tunnel to an acceptable exit.
+  ///
+  /// `AETHER_EXIT_LOC` is checked by the core before the SOCKS listener opens
+  /// and every minute after, so a tunnel that came up in the wrong country is a
+  /// tunnel the core is already about to replace. Polling the exit through the
+  /// proxy costs one HTTPS request; a teardown plus a fresh scan costs seconds.
+  Future<({String ip, String country, String colo, int pingMs})?>
+      _awaitCoreRelocation(VpnSettings st) async {
+    if (!_coreEnforcesExit) return null;
+    final deadline = DateTime.now().add(exitCoreGrace);
+    while (DateTime.now().isBefore(deadline) && _wantUp) {
+      await Future<void>.delayed(const Duration(seconds: 5));
+      if (!_wantUp) return null;
+      final exit = await _probeExit();
+      final cc = exit?.country ?? '';
+      if (matchesExitFilter(cc, st)) return exit;
+      _rememberRejected(cc);
+      _log('core is relocating the exit (saw ${cc.isEmpty ? '?' : cc})');
+    }
+    return null;
+  }
+
   /// Top-level so it is unit-testable without a controller (or a tunnel).
   ///
   /// An exit whose country could not be determined is *accepted*: a broken geo
@@ -572,12 +610,9 @@ class VpnController extends ChangeNotifier {
     for (var i = 0; i < ladder.length; i++) {
       if (!_wantUp) return AttemptOutcome.failed;
       final proto = ladder[i];
+      // Smart Connect escalates here: the second pass takes the TCP carrier with
+      // a fragmented ClientHello and ECH (see [CoreLaunch.smartVariant]).
       final attempt = _variant(i, ladder, proto, endpoint: endpoint);
-      // Smart Connect: the second MASQUE attempt rides the HTTP/2 carrier,
-      // which is what networks that drop QUIC (UDP 443) let through.
-      if (settings.protocol == Protocol.smart && i == 1) {
-        attempt.transport = MasqueTransport.h2;
-      }
       _set(snapshot.copyWith(
         phase: EnginePhase.scanning,
         protocol: proto.name,
@@ -630,6 +665,21 @@ class VpnController extends ChangeNotifier {
         if (cc.isNotEmpty &&
             settings.exitBlocked.map((e) => e.toUpperCase()).contains(cc)) {
           _fallback = (endpoint: ep, protocol: proto.name);
+        }
+        // The core was handed the same rule and re-dials the gateway on its
+        // own when the exit sits in a blocked country; tearing the tunnel down
+        // at the first wrong answer fights that mechanism and is what makes a
+        // filtered connect slow. Give it one grace window first.
+        final moved = await _awaitCoreRelocation(attempt);
+        if (moved != null) {
+          _lastExit = (
+            ip: moved.ip,
+            country: moved.country,
+            endpoint: ep,
+            protocol: proto.name,
+          );
+          _finalizeConnected(proto);
+          return AttemptOutcome.accepted;
         }
         await engine.stop();
         _set(snapshot.copyWith(
@@ -687,6 +737,7 @@ class VpnController extends ChangeNotifier {
       message: snapshot.message.isEmpty ? s.active : snapshot.message,
       connectedAt: DateTime.now(),
     ));
+    rate.reset();
     _log('exit accepted: ${snapshot.country.isEmpty ? '?' : snapshot.country} '
         '${snapshot.ip}');
     _statsTimer?.cancel();
@@ -733,24 +784,13 @@ class VpnController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ladder entry [i] as settings the core can be started with. Once the exit
-  /// search has walked the whole ladder, the MASQUE carrier is flipped on every
-  /// other pass: a different carrier means a different gateway pool, which is
-  /// the only lever the client has for landing in another country.
+  /// Ladder entry [i] as settings the core can be started with — the protocol
+  /// plus whatever Smart Connect escalation that pass calls for
+  /// ([CoreLaunch.smartVariant] keeps the rules in one testable place).
   VpnSettings _variant(int i, List<Protocol> ladder, Protocol proto,
-      {String? endpoint}) {
-    final base = settings.copyWithProtocol(proto);
-    if (settings.protocol == Protocol.smart &&
-        ladder.length > 1 &&
-        i >= ladder.length &&
-        i.isOdd) {
-      base.transport = base.transport == MasqueTransport.h3
-          ? MasqueTransport.h2
-          : MasqueTransport.h3;
-    }
-    if (endpoint != null && endpoint.isNotEmpty) base.endpoint = endpoint;
-    return base;
-  }
+          {String? endpoint}) =>
+      CoreLaunch.smartVariant(settings,
+          index: i, ladder: ladder, proto: proto, endpoint: endpoint);
 
   // ── the "still looking?" question ────────────────────────────────────────
 
@@ -864,6 +904,7 @@ class VpnController extends ChangeNotifier {
     busy = true;
     _statsTimer?.cancel();
     _clock?.cancel();
+    rate.reset();
     _set(snapshot.copyWith(
         phase: EnginePhase.disconnecting, message: s.disconnecting));
     try {
@@ -947,20 +988,40 @@ class VpnController extends ChangeNotifier {
     return false;
   }
 
+  /// Dashboard poller.
+  ///
+  /// Two different jobs, at two different costs. Every tick does one cheap
+  /// plain-HTTP request through SOCKS: it is the liveness proof the watchdog
+  /// judges and it refreshes the round-trip time. The full exit lookup (a DNS
+  /// name plus a TLS/geo request) runs every [exitRefreshTicks] ticks instead of
+  /// on every tick — it used to be a request through the tunnel every three
+  /// seconds, which is traffic the user's own downloads then pay for.
+  static const int exitRefreshTicks = 10;
+
   void _startStats() {
     _statsTimer?.cancel();
-    _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+    var tick = 0;
+    _statsTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (snapshot.phase != EnginePhase.connected) return;
+      tick++;
       try {
-        // Exit facts straight through the tunnel: the public IP of the VPN
-        // itself plus the country that IP belongs to (drives the flag).
-        final exit = await SocksProbe.exitInfo(port: settings.socksPort);
-        _set(snapshot.copyWith(
-          pingMs: exit.pingMs,
-          ip: exit.ip.isEmpty ? snapshot.ip : exit.ip,
-          country: exit.country.isEmpty ? snapshot.country : exit.country,
-          location: exit.colo.isEmpty ? snapshot.location : exit.colo,
-        ));
+        final ping = await SocksProbe.prove(
+          port: settings.socksPort,
+          attempts: 1,
+          timeout: const Duration(seconds: 8),
+        );
+        final refreshExit = tick % exitRefreshTicks == 1;
+        if (!refreshExit) {
+          _set(snapshot.copyWith(pingMs: ping));
+        } else {
+          final exit = await SocksProbe.exitInfo(port: settings.socksPort);
+          _set(snapshot.copyWith(
+            pingMs: exit.pingMs,
+            ip: exit.ip.isEmpty ? snapshot.ip : exit.ip,
+            country: exit.country.isEmpty ? snapshot.country : exit.country,
+            location: exit.colo.isEmpty ? snapshot.location : exit.colo,
+          ));
+        }
         _lastHealthy = DateTime.now();
       } catch (_) {
         final last = _lastHealthy;
@@ -973,17 +1034,107 @@ class VpnController extends ChangeNotifier {
           _scheduleWatchdog(forceReconnect: true);
         }
       }
-      try {
-        final st = await engine.status();
-        _set(snapshot.copyWith(
-          downloadBytes: int.tryParse('${st['download'] ?? 0}') ??
-              snapshot.downloadBytes,
-          uploadBytes:
-              int.tryParse('${st['upload'] ?? 0}') ?? snapshot.uploadBytes,
-          endpoint: st['endpoint']?.toString() ?? snapshot.endpoint,
-        ));
-      } catch (_) {}
+      await _readCounters();
     });
+  }
+
+  /// Pulls the byte counters out of the engine and feeds the rate meter.
+  Future<void> _readCounters() async {
+    try {
+      final st = await engine.status();
+      // Android publishes its counters through both the event stream and the
+      // status poll; a platform that answers with neither keeps the last values
+      // the events delivered, and the meter is fed either way.
+      final down = int.tryParse('${st['download'] ?? ''}') ??
+          snapshot.downloadBytes;
+      final up =
+          int.tryParse('${st['upload'] ?? ''}') ?? snapshot.uploadBytes;
+      final endpoint = '${st['endpoint'] ?? ''}';
+      _set(snapshot.copyWith(
+        downloadBytes: down,
+        uploadBytes: up,
+        endpoint:
+            endpoint.isEmpty ? snapshot.endpoint : endpoint,
+      ));
+      rate.update(down, up);
+    } catch (_) {
+      // Status is best-effort: a single failed poll never stops the meter.
+    }
+  }
+
+  /// What the raw line shows, versus what the tunnel shows.
+  ///
+  /// The two addresses are the whole point: a user whose "exit IP" never
+  /// changes (and always looks local) needs one answer to "is the VPN carrying
+  /// my traffic at all?" before any theory about carriers or exits. The raw
+  /// lookup deliberately bypasses every proxy, the tunnelled one goes through
+  /// the core's SOCKS listener — the same path the apps use.
+  String leakRawIp = '';
+  String leakRawCountry = '';
+  String leakTunnelIp = '';
+  String leakTunnelCountry = '';
+  String leakError = '';
+  bool leakChecking = false;
+
+  /// True when both lookups answered with the same public address, i.e. the
+  /// traffic the phone sends is not going through the tunnel.
+  bool get leakBypassed =>
+      leakRawIp.isNotEmpty &&
+      leakTunnelIp.isNotEmpty &&
+      leakRawIp == leakTunnelIp;
+
+  Future<void> runLeakCheck() async {
+    if (leakChecking) return;
+    leakChecking = true;
+    leakError = '';
+    notifyListeners();
+    try {
+      final raw = await SocksProbe.rawInfo();
+      leakRawIp = raw.ip;
+      leakRawCountry = raw.country;
+      _log('raw line: ${raw.ip} (${raw.country.isEmpty ? '??' : raw.country})');
+      if (snapshot.phase == EnginePhase.connected) {
+        final exit = await SocksProbe.exitInfo(port: settings.socksPort);
+        leakTunnelIp = exit.ip;
+        leakTunnelCountry = exit.country;
+        _log('through the tunnel: ${exit.ip} '
+            '(${exit.country.isEmpty ? '??' : exit.country})');
+      } else {
+        leakTunnelIp = '';
+        leakTunnelCountry = '';
+      }
+    } catch (e) {
+      leakError = '$e';
+      _log('leak check failed: $e');
+    } finally {
+      leakChecking = false;
+      notifyListeners();
+    }
+  }
+
+  /// Applies a new performance profile. It only takes effect on the next dial,
+  /// so a running tunnel is offered the reconnect right away.
+  Future<void> setPerf(PerfProfile profile) async {
+    settings.perf = profile;
+    settings.perfRxKb = 0;
+    settings.perfTxKb = 0;
+    await persist();
+    _log('performance profile: ${profile.name}');
+    notifyListeners();
+  }
+
+  /// True when the current split-tunnel choices are already in the running
+  /// tunnel. Per-app rules are baked into the TUN device and the core's routing
+  /// rules into its own process, so a change needs a re-dial — this is what the
+  /// UI's "apply now" button checks.
+  bool get splitNeedsRedial => snapshot.phase == EnginePhase.connected;
+
+  /// Re-dials so the split rules (or the performance profile) take effect.
+  Future<void> applyAndReconnect() async {
+    if (!snapshot.isActive && !busy) return;
+    _log('applying the new settings — reconnecting');
+    await disconnect();
+    await connect();
   }
 
   void _onEvent(Map<String, dynamic> event) {
@@ -1095,7 +1246,25 @@ class VpnController extends ChangeNotifier {
 
   void log(String line) => _log(line);
 
+  /// Shows a message now. The pages use it for settings that only take effect
+  /// on the next dial ("saved — reconnect to apply it"): the change is stored
+  /// immediately, and pretending the running tunnel changed would be a lie.
+  void notifyToast(String message) {
+    toast = message;
+    notifyListeners();
+  }
+
   void _log(String line) {
+    // The core's own counters arrive as log lines on Windows (AETHER_STATS),
+    // and they are the only byte source there.
+    final counters = CoreStats.parse(line);
+    if (counters != null) {
+      rate.update(counters.downBytes, counters.upBytes);
+      _set(snapshot.copyWith(
+        downloadBytes: counters.downBytes,
+        uploadBytes: counters.upBytes,
+      ));
+    }
     logs.add(LogLine(line));
     if (logs.length > 800) logs.removeRange(0, logs.length - 800);
     notifyListeners();

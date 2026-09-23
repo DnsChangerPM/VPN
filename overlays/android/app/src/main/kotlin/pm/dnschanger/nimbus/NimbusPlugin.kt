@@ -60,7 +60,7 @@ object NimbusPlugin {
                         }
                     }
                     intent.putExtra(NimbusVpnService.EXTRA_SOCKS_PORT, num("socksPort", 1819))
-                    intent.putExtra(NimbusVpnService.EXTRA_MTU, num("tunMtu", 1400))
+                    intent.putExtra(NimbusVpnService.EXTRA_MTU, num("tunMtu", 1500))
                     intent.putExtra(NimbusVpnService.EXTRA_KILL, args["killSwitch"] != false)
                     intent.putExtra(NimbusVpnService.EXTRA_BYPASS_LAN, args["bypassLan"] != false)
                     intent.putExtra(NimbusVpnService.EXTRA_IPV6, args["ipv6Tunnel"] == true)
@@ -177,14 +177,29 @@ object NimbusPlugin {
         activity.startActivity(intent)
     }
 
+    /**
+     * The apps a user can actually open, which is what a split-tunnel list is
+     * about. The old version dropped every `FLAG_SYSTEM` package, which on most
+     * phones also drops the preinstalled browser — the one app people most
+     * often want on the bypass list. Preinstalled apps are included now and
+     * marked, so the picker can filter them while still showing the ones the
+     * user has already selected.
+     */
     private fun listApps(activity: Activity): List<Map<String, String>> {
         val pm = activity.packageManager
-        return pm.getInstalledApplications(0)
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
-            .map {
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val appInfos = pm.queryIntentActivities(launcher, 0)
+            .mapNotNull { it.activityInfo?.applicationInfo }
+            .distinctBy { it.packageName }
+            .ifEmpty { pm.getInstalledApplications(0) }
+        return appInfos
+            .map { info ->
+                val preinstalled = info.flags and
+                    (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
                 mapOf(
-                    "package" to it.packageName,
-                    "label" to (it.loadLabel(pm)?.toString() ?: it.packageName),
+                    "package" to info.packageName,
+                    "label" to (info.loadLabel(pm)?.toString() ?: info.packageName),
+                    "system" to if (preinstalled) "1" else "0",
                 )
             }
             .sortedBy { it["label"] }

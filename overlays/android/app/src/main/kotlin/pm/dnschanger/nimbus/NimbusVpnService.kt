@@ -56,7 +56,7 @@ class NimbusVpnService : VpnService() {
     @Volatile private var endpoint: String = ""
     @Volatile private var protocol: String = "masque"
     @Volatile private var socksPort: Int = 1819
-    @Volatile private var tunMtu: Int = 1400
+    @Volatile private var tunMtu: Int = 1500
     @Volatile private var bridgeStarted: Boolean = false
     @Volatile private var h3GatewayUnavailable: Boolean = false
     @Volatile private var lastCoreError: String = ""
@@ -130,7 +130,7 @@ class NimbusVpnService : VpnService() {
             val splitMode = extras?.getString(EXTRA_SPLIT_MODE) ?: "off"
             val splitApps = extras?.getStringArrayList(EXTRA_SPLIT_APPS) ?: arrayListOf()
             socksPort = extras?.getInt(EXTRA_SOCKS_PORT, 1819) ?: 1819
-            tunMtu = extras?.getInt(EXTRA_MTU, 1400) ?: 1400
+            tunMtu = extras?.getInt(EXTRA_MTU, 1500) ?: 1500
             val bypassLan = extras?.getBoolean(EXTRA_BYPASS_LAN, true) != false
             val ipv6 = extras?.getBoolean(EXTRA_IPV6, false) == true
             val lanShare = extras?.getBoolean(EXTRA_LAN_SHARE, false) == true
@@ -167,7 +167,7 @@ class NimbusVpnService : VpnService() {
             }
 
             if (mode == "vpn") {
-                if (!establishVpn(dns, bypassLan, ipv6, splitMode, splitApps, session)) {
+                if (!establishVpn(dns, bypassLan, ipv6, splitMode, splitApps, session, env)) {
                     return bail(session)
                 }
             }
@@ -476,6 +476,7 @@ class NimbusVpnService : VpnService() {
         splitMode: String,
         splitApps: List<String>,
         session: Long,
+        env: Map<String, String>,
     ): Boolean {
         val builder = Builder()
             .setSession("VoidrauVPN")
@@ -550,7 +551,7 @@ class NimbusVpnService : VpnService() {
             emit("status", "error", lastCoreError)
             return false
         }
-        val config = writeHevConfig(ipv6)
+        val config = writeHevConfig(ipv6, env)
         val started = try {
             TProxyService.TProxyStartService(config.absolutePath, descriptor.fd)
         } catch (e: UnsatisfiedLinkError) {
@@ -590,12 +591,31 @@ class NimbusVpnService : VpnService() {
         return false
     }
 
-    private fun writeHevConfig(ipv6: Boolean): File {
+    /**
+     * The bridge's YAML. Beyond the addresses this is where the device's own
+     * throughput is decided: `tcp-buffer-size` is the splice buffer for every
+     * TCP session and `udp-recv-buffer-size` the socket buffer for QUIC/DNS, so
+     * the speed profile the user picked in the UI is honoured here too — the
+     * core's own tier cannot help with traffic the bridge has not handed over
+     * yet.
+     */
+    private fun writeHevConfig(ipv6: Boolean, env: Map<String, String>): File {
+        val fast = env["AETHER_PERF_PROFILE"] == "high"
+        val tcpBuffer = if (fast) 131072 else 65536
+        // The TCP splice buffer is allocated on the worker's own stack, so the
+        // stack has to grow with it (upstream's rule: size + 20480). The old
+        // fixed 32768 with a 65536 buffer was an overflow waiting to happen.
+        val stack = 20480 + tcpBuffer
+        val udpRecv = if (fast) 1048576 else 524288
         val config = File(cacheDir, "hev.yml")
         FileWriter(config, false).use { writer ->
             writer.write("misc:\n")
-            writer.write("  task-stack-size: 32768\n")
+            writer.write("  task-stack-size: $stack\n")
+            writer.write("  tcp-buffer-size: $tcpBuffer\n")
+            writer.write("  udp-recv-buffer-size: $udpRecv\n")
+            writer.write("  max-session-count: 0\n")
             writer.write("  connect-timeout: 15000\n")
+            writer.write("  limit-nofile: 65535\n")
             writer.write("  log-level: warn\n")
             writer.write("tunnel:\n")
             writer.write("  mtu: $tunMtu\n")
@@ -901,7 +921,7 @@ class NimbusVpnService : VpnService() {
                 extras.getStringArrayList(EXTRA_SPLIT_APPS)?.joinToString(","),
             )
             .putInt(EXTRA_SOCKS_PORT, extras.getInt(EXTRA_SOCKS_PORT, 1819))
-            .putInt(EXTRA_MTU, extras.getInt(EXTRA_MTU, 1400))
+            .putInt(EXTRA_MTU, extras.getInt(EXTRA_MTU, 1500))
             .putBoolean(EXTRA_KILL, extras.getBoolean(EXTRA_KILL, true))
             .putBoolean(EXTRA_BYPASS_LAN, extras.getBoolean(EXTRA_BYPASS_LAN, true))
             .putBoolean(EXTRA_IPV6, extras.getBoolean(EXTRA_IPV6, false))
@@ -925,7 +945,7 @@ class NimbusVpnService : VpnService() {
             ArrayList(apps.split(",").filter { it.isNotEmpty() }),
         )
         b.putInt(EXTRA_SOCKS_PORT, p.getInt(EXTRA_SOCKS_PORT, 1819))
-        b.putInt(EXTRA_MTU, p.getInt(EXTRA_MTU, 1400))
+        b.putInt(EXTRA_MTU, p.getInt(EXTRA_MTU, 1500))
         b.putBoolean(EXTRA_KILL, p.getBoolean(EXTRA_KILL, true))
         b.putBoolean(EXTRA_BYPASS_LAN, p.getBoolean(EXTRA_BYPASS_LAN, true))
         b.putBoolean(EXTRA_IPV6, p.getBoolean(EXTRA_IPV6, false))
@@ -997,6 +1017,14 @@ class NimbusVpnService : VpnService() {
     }
 
     private fun emit(type: String, phase: String?, message: String?) {
+        // Mirror what the broadcast carries into the companion, so the Dart
+        // side's status *poll* is as complete as the event stream: the live
+        // meter reads whichever arrives first.
+        liveDownload = download
+        liveUpload = upload
+        liveEndpoint = endpoint
+        liveProtocol = protocol
+        liveSocksPort = socksPort
         val i = Intent(ACTION_EVENT).setPackage(packageName)
         i.putExtra("type", type)
         i.putExtra("phase", phase)
@@ -1060,9 +1088,22 @@ class NimbusVpnService : VpnService() {
         @Volatile var currentMessage: String = ""
             private set
 
+        /** Last values the running service published; the Dart poll reads these
+         *  while the event stream carries the same numbers as they change. */
+        @Volatile var liveDownload: Long = 0
+        @Volatile var liveUpload: Long = 0
+        @Volatile var liveEndpoint: String = ""
+        @Volatile var liveProtocol: String = "masque"
+        @Volatile var liveSocksPort: Int = 1819
+
         fun statusMap(): Map<String, Any?> = mapOf(
             "phase" to (if (running.get()) currentPhase else "disconnected"),
             "message" to currentMessage,
+            "endpoint" to liveEndpoint,
+            "protocol" to liveProtocol,
+            "socksPort" to liveSocksPort,
+            "download" to liveDownload,
+            "upload" to liveUpload,
         )
     }
 }

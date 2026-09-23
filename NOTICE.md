@@ -9,8 +9,8 @@ third-party components nor every obligation applying to combined binaries.
 The iOS extension **statically links** these components, rather than launching
 independent programs:
 
-- **Aether 2.0.0 — CluvexStudio — AGPL-3.0-only**. Pinned source revision:
-  `0e6f6a5218e65ed4cddc68d1a71d9b9633f89e3f`.
+- **Aether 2.1.0 — CluvexStudio — AGPL-3.0-only**. Pinned source revision:
+  `a9703a723dff6d820252799a2ff32bd26d6638ee` (tag `v2.1.0`).
   <https://github.com/CluvexStudio/Aether>. See `assets/legal/Aether-AGPL-3.0.txt`.
 - **hev-socks5-tunnel 2.17.1 — hev/heiher — MIT**. Pinned source revision:
   `9a06bc6e7989da54e3d32ff701ef7a7ce4995d3a`.

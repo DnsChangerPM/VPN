@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voidrauvpn/models/settings.dart';
 import 'package:voidrauvpn/services/core_args.dart';
+import 'package:voidrauvpn/services/socks_probe.dart';
 import 'package:voidrauvpn/services/update_service.dart';
 
 void main() {
@@ -44,7 +45,7 @@ void main() {
     expect(h3.containsKey('AETHER_MASQUE_H2_FRAGMENT'), isFalse);
   });
 
-  test('wg and gool carry keepalive; masque carries MTU', () {
+  test('wg carries keepalive; the device MTU is ours, not the core\'s', () {
     final wg = CoreLaunch.environment(
       VpnSettings(protocol: Protocol.wg, keepalive: 15),
       configPath: '/tmp/aether.toml',
@@ -56,8 +57,14 @@ void main() {
       VpnSettings(protocol: Protocol.masque, tunMtu: 2000),
       configPath: '/tmp/aether.toml',
     );
-    expect(masque['AETHER_MASQUE_MTU'], '1400');
+    // 2000 is the size apps segment at on the TUN device; the inner MTU the
+    // core puts on the wire is its own decision (1280 on QUIC, 1500 on TCP),
+    // so nothing is sent for it.
+    expect(masque.containsKey('AETHER_MASQUE_MTU'), isFalse);
     expect(masque.containsKey('AETHER_WG_KEEPALIVE'), isFalse);
+    expect(VpnSettings(tunMtu: 2000).deviceMtu, 2000);
+    expect(VpnSettings(tunMtu: 20000).deviceMtu, 9000);
+    expect(VpnSettings(tunMtu: 200).deviceMtu, 1280);
   });
 
   test('IP version env tokens match the core grammar', () {
@@ -122,8 +129,36 @@ void main() {
     expect(copy.socksBind, '127.0.0.1:1819');
   });
 
+  test('the tunnel MTU and the core MTU are separate settings', () {
+    // The device side is terminated inside the bridge, so it can be large
+    // without touching what the core puts on the wire.
+    final device = VpnSettings(tunMtu: 8500, coreMtu: 0);
+    expect(device.deviceMtu, 8500);
+    expect(device.coreMtuOverride, 0);
+    final core = VpnSettings(coreMtu: 1200);
+    expect(core.coreMtuOverride, 1200);
+    expect(VpnSettings(coreMtu: 100).coreMtuOverride, 576);
+  });
+
   test('smart ladder walks transports', () {
     expect(CoreLaunch.smartLadder(VpnSettings()).length, greaterThan(3));
+  });
+
+  test('a Cloudflare trace is read the way the leak check needs it', () {
+    const body = 'fl=123abc\n'
+        'h=www.cloudflare.com\n'
+        'ip=5.22.10.7\n'
+        'ts=1760000000.123\n'
+        'loc=IR\n'
+        'colo=FRA\n';
+    final trace = SocksProbe.parseTrace(body);
+    expect(trace['ip'], '5.22.10.7');
+    // The same helper feeds the exit-country filter, which ignores the
+    // anonymised markers rather than treating them as a country.
+    expect(SocksProbe.countryCode(trace['loc']!), 'IR');
+    expect(SocksProbe.countryCode('XX'), '');
+    expect(SocksProbe.countryCode('T1'), '');
+    expect(SocksProbe.parseTrace('nothing here')['ip'], isNull);
   });
 
   test('SHA256SUMS parser', () {

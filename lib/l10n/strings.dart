@@ -8,6 +8,8 @@ class S {
   String get navConnect => isFa ? 'اتصال' : 'Connect';
   String get navConfig => isFa ? 'پیکربندی' : 'Configurations';
   String get navSettings => isFa ? 'تنظیمات' : 'Settings';
+  String get navSpeed => isFa ? 'سرعت' : 'Speed';
+  String get navSplit => isFa ? 'تونل تفکیکی' : 'Split';
   String get navDiag => isFa ? 'عیب‌یابی' : 'Diagnostics';
   String get navAbout => isFa ? 'درباره' : 'About';
 
@@ -56,8 +58,8 @@ class S {
       : 'Bind SOCKS on all interfaces — trusted LAN only';
   String get splitTitle => isFa ? 'تونل تفکیکی' : 'Split tunneling';
   String get splitHelp => isFa
-      ? 'انتخاب برنامه‌هایی که از VPN استفاده کنند'
-      : 'Choose which apps use the VPN';
+      ? 'انتخاب کنید کدام برنامه‌ها از تونل عبور کنند و کدام مقصدها بیرون از آن بمانند'
+      : 'Choose which apps ride the tunnel, and which destinations stay outside it';
   String get splitOff => isFa ? 'همه برنامه‌ها' : 'All apps';
   String get splitInclude => isFa ? 'فقط انتخاب‌شده' : 'Only selected';
   String get splitExclude => isFa ? 'به‌جز انتخاب‌شده' : 'Bypass selected';
@@ -298,4 +300,167 @@ class S {
   String get wgHintApplied => isFa
       ? 'پروتکل روی WireGuard تنظیم شد'
       : 'Protocol set to WireGuard';
+
+  // ── speed (2.1.0 performance profile, live meter, throughput test) ────────
+  String get speedTitle => isFa ? 'سرعت و پروفایل کارایی' : 'Speed & performance';
+  String get speedHelp => isFa
+      ? 'هسته به‌طور خودکار از روی تعداد هسته و رم دستگاه یک سطح کارایی انتخاب می‌کند. اگر خط شما پرسرعت است و هنوز سرعت کم است، سطح را دستی بالا ببرید.'
+      : 'The core picks a performance tier from your CPU count and RAM. If your line is fast and the tunnel still feels capped, raise it by hand.';
+  String get perfEco => isFa ? 'کم‌مصرف' : 'Eco';
+  String get perfAuto => isFa ? 'خودکار' : 'Automatic';
+  String get perfTurbo => isFa ? 'توربو' : 'Turbo';
+  String get perfExtreme => isFa ? 'حداکثر' : 'Extreme';
+  String get perfEcoHelp => isFa
+      ? 'کوچک‌ترین بافرها — برای گوشی‌های قدیمی و مصرف باتری'
+      : 'Smallest buffers — old phones, battery first';
+  String get perfAutoHelp => isFa
+      ? 'تشخیص خودکار بر اساس سخت‌افزار (پیشنهادی)'
+      : 'Detected from the hardware (recommended)';
+  String get perfTurboHelp => isFa
+      ? 'سطح High با پنجره ۲ مگابایتی — بیشترین اثر روی دانلود'
+      : 'The high tier with a 2 MiB window — the big download win';
+  String get perfExtremeHelp => isFa
+      ? 'دو برابر توربو؛ رم بیشتری مصرف می‌کند'
+      : 'Twice Turbo; uses more memory per connection';
+  String get perfIosNote => isFa
+      ? 'در iOS افزونهٔ VPN با حافظهٔ محدود کار می‌کند، پس پروفایل همیشه روی کم‌مصرف‌ترین سطح می‌ماند. سرعت اینجا از مسیر و پروتکل می‌آید، نه از بافرها.'
+      : 'On iOS the extension runs with a much smaller memory budget, so the profile always stays at the lowest tier. Speed here comes from the route and the protocol, not from buffers.';
+  String get perfApplied => isFa
+      ? 'پروفایل ذخیره شد — برای اعمال، اتصال دوباره لازم است'
+      : 'Profile saved — reconnect to apply it';
+  String get applyNow => isFa ? 'اعمال و اتصال دوباره' : 'Apply & reconnect';
+  String get liveSpeed => isFa ? 'ترافیک زنده' : 'Live traffic';
+  String get leakCheck => isFa ? 'آزمون واقعی تونل' : 'Tunnel reality check';
+  String get leakCheckHelp => isFa
+      ? 'همین حالا دو بار آی‌پی عمومی خوانده می‌شود: یک‌بار از مسیر عادی خط و یک‌بار از داخل تونل. اگر یکی باشند، ترافیک شما از تونل عبور نمی‌کند.'
+      : 'Reads the public IP twice: once on the raw line, once through the tunnel. If they match, your traffic is not going through the tunnel.';
+  String get leakRun => isFa ? 'بررسی کن' : 'Check now';
+  String get leakRunning => isFa ? 'در حال بررسی…' : 'Checking…';
+  String get leakRaw => isFa ? 'خط عادی (بدون تونل)' : 'Raw line (no tunnel)';
+  String get leakThrough => isFa ? 'از داخل تونل' : 'Through the tunnel';
+  String get leakOk => isFa
+      ? 'ترافیک واقعاً از تونل عبور می‌کند؛ آی‌پی و کشور بالا همان چیزی است که سایت‌ها می‌بینند.'
+      : 'Traffic really goes through the tunnel; the address above is what sites see.';
+  String get leakBypassed => isFa
+      ? 'هر دو یکی هستند: ترافیک از تونل عبور نمی‌کند و آی‌پی نمایش‌داده‌شده آی‌پی خود خط است. اتصال را دوباره برقرار کنید و اگر تکرار شد، حالت پروتکل را عوض کنید.'
+      : 'Both are the same address: traffic is not going through the tunnel, and the IP you see is your own line. Reconnect, and if it repeats switch the protocol.';
+  String get leakNoTunnel => isFa
+      ? 'برای مقایسه، اول وصل شوید تا مسیر داخل تونل هم خوانده شود.'
+      : 'Connect first so the tunnelled path can be compared.';
+  String get leakFailed => isFa
+      ? 'خواندن آی‌پی ممکن نشد (فیلترینگ یا قطعی).'
+      : 'Could not read the address (filtering or no connectivity).';
+  String get perfProfile => isFa ? 'پروفایل سرعت' : 'Speed profile';
+  String get off => isFa ? 'خاموش' : 'Off';
+
+  /// Diagnostics cell: the two MTUs, spelled out so nobody has to guess which
+  /// side is which.
+  String mtuSummary(int device, int core) => isFa
+      ? 'دستگاه $device / هسته ${core == 0 ? 'خودکار' : '$core'}'
+      : 'device $device / core ${core == 0 ? 'auto' : '$core'}';
+
+  String get mtuHelp => isFa
+      ? 'MTU دستگاه: اندازه بسته‌هایی که برنامه‌ها می‌فرستند. ۱۵۰۰ پیشنهاد می‌شود.'
+      : 'Device MTU: the packet size apps send. 1500 is the usual pick.';
+  String get coreMtuLabel =>
+      isFa ? 'MTU داخلی هسته (۰ = خودکار)' : 'Core inner MTU (0 = auto)';
+  String get coreMtuHelp => isFa
+      ? 'MTU داخلی هسته: ۰ یعنی خودش تصمیم بگیرد (۱۲۸۰ برای QUIC، ۱۵۰۰ برای HTTP/2)'
+      : 'Core inner MTU: 0 lets the core decide (1280 for QUIC, 1500 over TCP)';
+  String get tcpTuning => isFa ? 'تنظیم دقیق TCP' : 'TCP tuning';
+  String get tcpConnect => isFa ? 'مهلت اتصال (ثانیه)' : 'Connect timeout (s)';
+  String get tcpKeepalive => isFa ? 'Keepalive (ثانیه)' : 'Keep-alive (s)';
+  String get halfClose => isFa ? 'نیمه‌بسته (ثانیه)' : 'Half-closed (s)';
+  String get quicV2 => isFa ? 'بازکننده QUIC v2' : 'QUIC v2 opener';
+  String get quicV2Help => isFa
+      ? 'عبور از فیلترهایی که فقط QUIC نسخه ۱ را می‌شناسند'
+      : 'Slips past filters that only know QUIC v1';
+  String get ech => isFa ? 'ECH (پنهان‌کردن SNI)' : 'ECH (hide the SNI)';
+  String get echHelp => isFa
+      ? 'درخواست Encrypted Client Hello از کلاودفلر'
+      : 'Fetch an Encrypted Client Hello config from Cloudflare';
+  String get secondHop => isFa ? 'مسیر دوم (Psiphon / Tor)' : 'Second hop (Psiphon / Tor)';
+  String get secondHopHelp => isFa
+      ? 'اگر شبکه‌ای WARP را می‌بندد، تونل را از داخل Psiphon یا Tor عبور بده'
+      : 'When a network blocks WARP outright, carry or dial the tunnel through Psiphon or Tor';
+  String get hopOff => isFa ? 'خاموش' : 'Off';
+  String get hopPsiphon => isFa ? 'Psiphon' : 'Psiphon';
+  String get hopPsiphonReverse => isFa ? 'Psiphon (معکوس)' : 'Psiphon reverse';
+  String get hopPsiphonOnly => isFa ? 'فقط Psiphon' : 'Psiphon only';
+  String get hopTor => isFa ? 'Tor' : 'Tor';
+  String get hopTorReverse => isFa ? 'Tor (معکوس)' : 'Tor reverse';
+  String get hopTorOnly => isFa ? 'فقط Tor' : 'Tor only';
+  String get hopRegion => isFa ? 'کشور خروجی Psiphon' : 'Psiphon exit country';
+  String get hopRegionHelp => isFa
+      ? 'مثلاً DE یا US — خالی یعنی خودش انتخاب کند'
+      : 'e.g. DE or US — empty lets it choose';
+  String get hopCdn => isFa ? 'محدود به CDN (meek)' : 'CDN only (meek)';
+  String get hopHttp => isFa ? 'پروکسی HTTP هم بساز' : 'Also serve HTTP CONNECT';
+  String get hopHttpHelp => isFa
+      ? 'پروکسی HTTP این پرش روی یک پورت جدا باز می‌شود تا برنامه‌هایی که SOCKS5 نمی‌فهمند هم از آن استفاده کنند.'
+      : 'The hop also opens an HTTP proxy on its own port, for apps that cannot speak SOCKS5.';
+  String get torCountry => isFa ? 'کشور برای دریافت بریج' : 'Bridgedb country';
+  String get torCountryHelp => isFa
+      ? 'مثل ir — بریج‌های مناسب همان کشور'
+      : 'e.g. ir — bridges suited to that country';
+
+  // ── split tunneling ──────────────────────────────────────────────────────
+  String get splitPerApp => isFa ? 'تفکیک برنامه‌ها' : 'Per app';
+  String get splitPerAppHelp => isFa
+      ? 'اندروید خودش تصمیم می‌گیرد کدام برنامه وارد تونل شود؛ برنامه‌های دیگر اینترنت عادی خود را دارند.'
+      : 'Android itself decides which apps enter the tunnel; the rest keep their normal internet.';
+  String get splitPerAppUnsupported => isFa
+      ? 'روی این سیستم‌عامل امکان تفکیک برنامه‌ای نیست (کارت شبکه بسته را می‌بیند، نه برنامه را).'
+      : 'This OS cannot split per app: the adapter sees packets, not processes.';
+  String get splitDestinations => isFa ? 'تفکیک مقصدها' : 'Per destination';
+  String get splitDestinationsHelp => isFa
+      ? 'دامنه/آی‌پی/پورت را مستقیم بفرست یا کامل مسدود کن — روی همه سیستم‌عامل‌ها کار می‌کند.'
+      : 'Send a domain/IP/port out directly, or refuse it — works on every platform.';
+  String get splitDirect => isFa ? 'عبور مستقیم (بدون VPN)' : 'Direct (leave the VPN)';
+  String get splitBlock => isFa ? 'مسدود' : 'Block';
+  String get splitDirectHint => isFa
+      ? 'مثال: bank.ir یا 10.0.0.0/8 یا keyword:tiktok'
+      : 'e.g. bank.ir, 10.0.0.0/8 or keyword:tiktok';
+  String get splitBlockHint => isFa
+      ? 'مثال: ads.example.com یا port:25'
+      : 'e.g. ads.example.com or port:25';
+  String get splitAdd => isFa ? 'افزودن' : 'Add';
+  String get splitPresetPrivate => isFa ? 'شبکه محلی' : 'Local network';
+  String get splitPresetPrivateHelp => isFa
+      ? 'رنج‌های خصوصی از تونل بیرون بمانند'
+      : 'Keep private ranges off the tunnel';
+  String get splitPresetSmtp => isFa ? 'پورت ۲۵' : 'Port 25';
+  String get splitRuleBad => isFa
+      ? 'این قاعده قابل استفاده نیست (فاصله/کاما/خالی)'
+      : 'That rule cannot be used (space, comma or empty)';
+  String get splitRuleDuplicate => isFa ? 'تکراری است' : 'Already in the list';
+  String get splitWindowsNote => isFa
+      ? 'در ویندوز فقط قاعده‌های آدرس‌محور (IP/شبکه) روی اینترنت واقعی اثر دارند؛ قاعده‌های نام‌محور در اندروید اعمال می‌شوند.'
+      : 'On Windows only address rules (IP/network) really leave the tunnel; name rules apply on Android.';
+  String get splitNone => isFa ? 'فعال نیست' : 'Not active';
+  String get appSearchEmpty => isFa ? 'برنامه‌ای پیدا نشد' : 'No application found';
+  String get appInvert => isFa ? 'برعکس کن' : 'Invert';
+  String get systemApps => isFa ? 'برنامه‌های سیستمی' : 'System apps';
+  String get splitAppsIncludeHint => isFa
+      ? 'فقط همین برنامه‌ها از تونل عبور می‌کنند؛ بقیه با اینترنت عادی.'
+      : 'Only these apps go through the tunnel; everything else uses the raw connection.';
+  String get splitAppsExcludeHint => isFa
+      ? 'همه از تونل عبور می‌کنند جز همین برنامه‌ها.'
+      : 'Everything goes through the tunnel except these apps.';
+  String get splitAppsOwn => isFa
+      ? 'خود VoidrauVPN همیشه از تونل بیرون می‌ماند تا حلقه ایجاد نشود'
+      : 'VoidrauVPN itself always stays outside the tunnel (no routing loop)';
+  String get splitApplied => isFa
+      ? 'قواعد تفکیکی ذخیره شد — برای اعمال، اتصال دوباره لازم است'
+      : 'Split rules saved — reconnect to apply them';
+
+  // ── diagnostics additions ────────────────────────────────────────────────
+  String get exitLock => isFa ? 'قفل کشور خروجی در هسته' : 'Core exit lock';
+  String get httpProxy => isFa ? 'پروکسی HTTP محلی' : 'Local HTTP proxy';
+  String get httpProxyHelp => isFa
+      ? 'برای برنامه‌هایی که فقط پروکسی HTTP می‌فهمند'
+      : 'For apps that only understand an HTTP proxy';
+  String get exitLockHelp => isFa
+      ? 'هسته پیش از باز شدن پروکسی، کشور خروجی را بررسی می‌کند تا اسکن دوباره لازم نشود'
+      : 'The core checks the exit country before opening the proxy, so fewer re-dials';
 }

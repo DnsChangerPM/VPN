@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Split tunneling: the picker has to list every app the device can run,
+         preinstalled ones included, so a user can keep a browser out of the
+         tunnel. Package visibility is limited to what this query returns. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
 
     <queries>
