@@ -16,6 +16,10 @@ on:
         description: 'Sign and upload to App Store Connect (requires Apple secrets)'
         default: false
         type: boolean
+      publish_release:
+        description: 'Publish the signed IPA + corresponding source as a GitHub pre-release (needs upload_testflight)'
+        default: false
+        type: boolean
       distribution_rights_reviewed:
         description: 'I have reviewed Aether AGPL licensing and Apple VPN/privacy/export requirements'
         default: false
@@ -42,6 +46,13 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 120
+    # The publish job must release exactly the artifact this job produced, so the
+    # names are computed once and handed over instead of being repeated.
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      build_number: ${{ steps.meta.outputs.build_number }}
+      artifact: ${{ steps.meta.outputs.artifact }}
+      signed: ${{ steps.meta.outputs.signed }}
     env:
       IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'pm.dnschanger.voidrauvpn' }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
@@ -50,9 +61,20 @@ jobs:
       IOS_UPLOAD: ${{ inputs.upload_testflight && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          {
+            echo "version=$IOS_VERSION"
+            echo "build_number=$IOS_BUILD_NUMBER"
+            echo "artifact=VoidrauVPN-iOS-$IOS_VERSION-$IOS_BUILD_NUMBER"
+            echo "signed=$IOS_UPLOAD"
+          } >> "$GITHUB_OUTPUT"
       - name: Validate inputs and Apple SDK
         env:
           RIGHTS_REVIEWED: ${{ inputs.distribution_rights_reviewed }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -63,6 +85,10 @@ jobs:
           if os.environ['IOS_UPLOAD'] == 'true':
               assert os.environ.get('RIGHTS_REVIEWED') == 'true', 'Review distribution rights before upload'
               assert re.fullmatch(r'[A-Z0-9]{10}', os.environ.get('APPLE_TEAM_ID', '')), 'Set APPLE_TEAM_ID variable'
+          if os.environ.get('PUBLISH_RELEASE') == 'true':
+              # An unsigned archive has no IPA and is not installable; publishing it
+              # would put a file nobody can use behind a release page.
+              assert os.environ['IOS_UPLOAD'] == 'true', 'publish_release needs upload_testflight: only a signed build produces an IPA'
           PY
           # Apple requires an accepted SDK; do not silently archive with an old one.
           XCODE=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
@@ -157,7 +183,7 @@ jobs:
         if: inputs.upload_testflight
         uses: actions/upload-artifact@v4
         with:
-          name: VoidrauVPN-iOS-${{ env.IOS_VERSION }}-${{ env.IOS_BUILD_NUMBER }}
+          name: ${{ steps.meta.outputs.artifact }}
           path: |
             build/ios/ipa/*.ipa
             build/ios/source/
@@ -195,3 +221,89 @@ jobs:
         env:
           IOS_SIGNING_DIR: ${{ runner.temp }}/ios-signing
         run: python3 scripts/ios/cleanup_signing.py
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build
+    # Opt-in and dispatch-only: a pull request, a test-only run or an unsigned
+    # archive never publishes anything to the Releases page.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+      BUILD_NUMBER: ${{ needs.build.outputs.build_number }}
+      TAG: ios-v${{ needs.build.outputs.version }}
+      CHANNEL_URL: 'https://t.me/Voidrau'
+    steps:
+      - name: Download the signed build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: staging
+      - name: Stage IPA, corresponding source and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          IPA=$(find staging -type f -name '*.ipa' -print -quit)
+          SOURCE=$(find staging -type f -name 'VoidrauVPN-ios-source.tar.gz' -print -quit)
+          NOTICE=$(find staging -type f -name 'NOTICE.md' -print -quit)
+          test -n "$IPA" || { echo '::error::No IPA in the signed build artifact'; exit 1; }
+          # A binary release without its source bundle is not an AGPL correspondence:
+          # refuse to publish rather than ship a partial release.
+          test -n "$SOURCE" || { echo '::error::No corresponding-source archive in the build artifact'; exit 1; }
+          cp "$IPA" "release/VoidrauVPN-iOS-${VERSION}-${BUILD_NUMBER}.ipa"
+          cp "$SOURCE" "release/VoidrauVPN-iOS-${VERSION}-${BUILD_NUMBER}-corresponding-source.tar.gz"
+          if [ -n "$NOTICE" ]; then cp "$NOTICE" release/NOTICE.md; fi
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          ls -l release
+      - name: Publish GitHub Release
+        run: |
+          set -euo pipefail
+          TITLE="VoidrauVPN iOS v${VERSION} (build ${BUILD_NUMBER})"
+          NOTES=$(cat <<EOF
+          ## VoidrauVPN iOS v${VERSION} (build ${BUILD_NUMBER})
+
+          Signed iPhone/iPad build of commit \`${GITHUB_SHA}\`, produced by the
+          \`iOS - Build and TestFlight\` workflow and uploaded to App Store Connect for
+          TestFlight.
+
+          > **This is deliberately a pre-release.** GitHub keeps \`releases/latest\`
+          > pointing at the Android/Windows \`v*\` release, so the in-app updater of
+          > existing installs is untouched by an iOS build. Install on a device through
+          > TestFlight (build ${BUILD_NUMBER}) or a sideloading tool; the App Store
+          > listing is a separate, manual step.
+          >
+          > Notes, support and Android/Windows installers: ${CHANNEL_URL}
+
+          ### Downloads
+          - \`VoidrauVPN-iOS-${VERSION}-${BUILD_NUMBER}.ipa\` — signed app with the embedded PacketTunnel extension
+          - \`VoidrauVPN-iOS-${VERSION}-${BUILD_NUMBER}-corresponding-source.tar.gz\` — complete corresponding source for this binary (pinned Aether revision and HEV patch)
+          - \`NOTICE.md\` — license notices
+          - \`SHA256SUMS.txt\` — checksums of the files above
+
+          EOF
+          )
+          # The heredoc body keeps the workflow's indentation; strip it so the notes
+          # render as Markdown on the release page.
+          NOTES=$(printf '%s\n' "$NOTES" | sed -e 's/^ *//')
+          printf '%s\n' "$NOTES" > notes.md
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber --repo "$REPO"
+            gh release edit "$TAG" --title "$TITLE" --notes-file notes.md --prerelease --repo "$REPO"
+          else
+            # Re-running for the same version updates the release instead of piling up
+            # tags; the tag always points at the commit that produced the IPA.
+            gh release create "$TAG" release/* --title "$TITLE" --notes-file notes.md --prerelease --target "$GITHUB_SHA" --repo "$REPO"
+          fi
+          URL=$(gh release view "$TAG" --repo "$REPO" --json url --jq .url)
+          {
+            echo '### Published GitHub pre-release'
+            echo
+            echo "- ${URL} (tag \`${TAG}\`)"
+            echo '- Pre-release on purpose: `releases/latest` — the endpoint the in-app updater reads — still resolves to the Android/Windows `v*` release.'
+          } >> "$GITHUB_STEP_SUMMARY"

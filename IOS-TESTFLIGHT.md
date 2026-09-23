@@ -148,6 +148,7 @@ workflow جدید: **Actions → iOS - Build and TestFlight → Run workflow**.
 - `version`: مثلاً `1.1.0`
 - `build_number`: خالی؛ پیش‌فرض شمارهٔ run به‌همراه attempt، مثل `12.1`
 - `upload_testflight`: **false**
+- `publish_release`: **false** (بدون امضا IPA‌ای برای انتشار وجود ندارد)
 - `distribution_rights_reviewed`: **false**
 
 job روی macOS و Xcode 26، Flutter **3.35.7**، Rust پین‌شده در `scripts/pins.json` و
@@ -160,6 +161,9 @@ sourceهای پین‌شده ساخته می‌شود. Runner و PacketTunnel و
 پس از سبزشدن build، بررسی مجوز و آماده‌کردن موارد اپل:
 
 - `upload_testflight`: **true**
+- `publish_release`: اختیاری؛ با **true** همان بیلد امضاشده به‌صورت GitHub **pre-release**
+  زیر تگ `ios-vX.Y.Z` منتشر می‌شود (پیش‌فرض **false**). این ورودی بدون
+  `upload_testflight: true` خطا می‌دهد، چون بیلد بدون امضا IPA ندارد.
 - `distribution_rights_reviewed`: فقط پس از بررسی واقعی **true**
 - `version`: نسخهٔ موردنظر؛ فرمت `x.y.z`
 - `build_number`: یکتا و بزرگ‌تر از شمارهٔ قبلی همان نسخه. اگر قبلاً با روش دیگری build
@@ -174,11 +178,18 @@ sourceهای پین‌شده ساخته می‌شود. Runner و PacketTunnel و
 5. ذخیرهٔ IPA و **corresponding-source archive** در Actions Artifacts (۳۰ روز نگه‌داری).
 6. ارسال با API key به App Store Connect از طریق `xcrun altool`.
 7. پاک‌کردن keychain، profileهای نصب‌شده و فایل‌های موقت Secret حتی در مسیر خطا.
+8. اگر `publish_release` روشن باشد، job جداگانهٔ **Publish GitHub Release** همان IPA
+   امضاشده، corresponding-source و `SHA256SUMS.txt` را در یک GitHub **pre-release** زیر
+   تگ `ios-vX.Y.Z` منتشر (یا برای همان نسخه به‌روزرسانی) می‌کند. اجرای دوبارهٔ همان نسخه
+   assetها را جایگزین می‌کند و release تکراری نمی‌سازد.
 
-فایل IPA را از لینک GitHub نمی‌توان مثل APK روی آیفون نصب کرد. این workflow عمداً
-GitHub Release عمومی یا tag ریلیز Android ایجاد نمی‌کند، تا updater نسخه‌های دیگر را
-اشتباه بازنشسته نکند. source artifact را پیش از انقضای Actions نگه دارید و مطابق
-تعهدات مجوز در اختیار دریافت‌کنندگان قرار دهید.
+فایل IPA را از لینک GitHub نمی‌توان مثل APK روی آیفون نصب کرد؛ نصب فقط از
+TestFlight/App Store یا ابزار sideload ممکن است. به‌صورت پیش‌فرض این workflow هیچ
+GitHub Release یا tag ریلیز Android ایجاد نمی‌کند. اگر `publish_release` را روشن کنید،
+خروجی یک **pre-release** با تگ `ios-vX.Y.Z` است؛ چون pre-release است، `releases/latest` —
+همان چیزی که updater می‌خواند — همچنان به ریلیز `v*` اندروید/ویندوز اشاره می‌کند و
+نسخه‌های دیگر اشتباه بازنشسته نمی‌شوند. source artifact را هم پیش از انقضای Actions
+نگه دارید و مطابق تعهدات مجوز در اختیار دریافت‌کنندگان قرار دهید.
 
 ## ۴. مرحلهٔ نهایی داخل App Store Connect
 

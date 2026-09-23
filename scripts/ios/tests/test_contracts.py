@@ -60,6 +60,21 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(manifest['NSPrivacyTracking'])
         self.assertTrue(manifest['NSPrivacyAccessedAPITypes'])
 
+    def test_ios_release_publishing_stays_opt_in_and_prerelease(self):
+        """The iOS workflow publishes an IPA, and the in-app updater reads
+        `releases/latest`: publishing must stay opt-in, dispatch-only and
+        pre-release, or an iOS build would retire Android/Windows installs."""
+        workflow = (ROOT / '.github/workflows/ios.yml').read_text()
+        self.assertIn('name: Publish GitHub Release', workflow)
+        self.assertRegex(
+            workflow,
+            r"if: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.publish_release \}\}",
+        )
+        self.assertIn('--prerelease', workflow)
+        self.assertIn('publish_release needs upload_testflight', workflow)
+        # The published files must be the ones the build job uploaded.
+        self.assertIn('name: ${{ needs.build.outputs.artifact }}', workflow)
+
 
 if __name__ == '__main__':
     unittest.main()
