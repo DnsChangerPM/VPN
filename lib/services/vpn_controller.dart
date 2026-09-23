@@ -529,6 +529,10 @@ class VpnController extends ChangeNotifier {
       _log('exit filter: $exitFilterLabel');
       _armPromptTimer();
       var next = dial;
+      // How many times the whole ladder has been walked. Every pass after the
+      // first hands the escalation a different rung, which is what makes the
+      // MASQUE carrier (and with it the gateway pool) alternate.
+      var epoch = 0;
       while (_wantUp) {
         // A decision taken while this loop was dialling ("connect with the Iran
         // IP", a rule changed on the Config page) lands in _pendingDial and is
@@ -545,11 +549,13 @@ class VpnController extends ChangeNotifier {
         final hopProtocol = hop?.protocol;
         final outcome = await _runAttempt(
           endpoint: hop?.endpoint,
+          epoch: epoch,
           only: hopProtocol == null
               ? null
               : Protocol.values.firstWhere((p) => p.name == hopProtocol,
                   orElse: () => settings.protocol),
         );
+        epoch++;
         next = null;
         if (outcome == AttemptOutcome.accepted || !_wantUp) return;
         if (settings.exitFilter == ExitFilter.off) {
@@ -602,7 +608,11 @@ class VpnController extends ChangeNotifier {
   ///       user does not want, so the search should continue,
   ///   [AttemptOutcome.failed]   — no tunnel at all (this is a network error,
   ///       not an exit-country problem).
-  Future<AttemptOutcome> _runAttempt({String? endpoint, Protocol? only}) async {
+  Future<AttemptOutcome> _runAttempt({
+    String? endpoint,
+    Protocol? only,
+    int epoch = 0,
+  }) async {
     final ladder = only != null
         ? <Protocol>[only]
         : CoreLaunch.smartLadder(settings);
@@ -610,9 +620,12 @@ class VpnController extends ChangeNotifier {
     for (var i = 0; i < ladder.length; i++) {
       if (!_wantUp) return AttemptOutcome.failed;
       final proto = ladder[i];
-      // Smart Connect escalates here: the second pass takes the TCP carrier with
-      // a fragmented ClientHello and ECH (see [CoreLaunch.smartVariant]).
-      final attempt = _variant(i, ladder, proto, endpoint: endpoint);
+      // Smart Connect escalates here: the second rung takes the TCP carrier with
+      // a fragmented ClientHello and ECH, and later passes alternate the carrier
+      // (see [CoreLaunch.smartVariant]). The index is global across passes, so a
+      // repeated search does not replay the same rung forever.
+      final attempt = _variant(epoch * ladder.length + i, ladder, proto,
+          endpoint: endpoint);
       _set(snapshot.copyWith(
         phase: EnginePhase.scanning,
         protocol: proto.name,

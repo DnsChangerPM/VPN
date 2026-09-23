@@ -205,13 +205,17 @@ void main() {
 
   group('smart connect escalation', () {
     final ladder = CoreLaunch.smartLadder(VpnSettings());
-    VpnSettings variant(int i, {List<Protocol>? l, Protocol? proto}) =>
-        CoreLaunch.smartVariant(
-          VpnSettings(),
-          index: i,
-          ladder: l ?? ladder,
-          proto: proto ?? (l ?? ladder)[i],
-        );
+    // The exit search numbers its rungs globally (`epoch * ladder.length + i`),
+    // so the protocol for rung n is the ladder entry n wraps around to.
+    VpnSettings variant(int i, {List<Protocol>? l, Protocol? proto}) {
+      final rungs = l ?? ladder;
+      return CoreLaunch.smartVariant(
+        VpnSettings(),
+        index: i,
+        ladder: rungs,
+        proto: proto ?? rungs[i % rungs.length],
+      );
+    }
 
     test('the first pass is left exactly as configured', () {
       final first = variant(0);
@@ -248,11 +252,17 @@ void main() {
       expect(wg.fragment, isFalse);
     });
 
-    test('the exit search flips the carrier past the end of the ladder', () {
-      final extra = variant(ladder.length + 1);
-      expect(extra.transport, MasqueTransport.h2);
-      final back = variant(ladder.length + 2);
-      expect(back.transport, MasqueTransport.h3);
+    test('the exit search flips the carrier once the ladder is walked', () {
+      // The first rung of the second pass: a carrier the first pass never
+      // opened, i.e. a different pool of gateways to land in.
+      final second = variant(ladder.length);
+      expect(second.transport, MasqueTransport.h2);
+      expect(second.fragment, isTrue);
+      // The rung after it is the scheduled hidden handshake again, on a rung
+      // that is not MASQUE the carrier is left alone.
+      final wireguard = variant(ladder.length + 2);
+      expect(wireguard.protocol, Protocol.wg);
+      expect(wireguard.transport, MasqueTransport.h3);
     });
   });
 

@@ -86,6 +86,12 @@ jobs:
           tests = pathlib.Path("test.txt")
           if tests.exists():
               body = tests.read_text(errors="replace").splitlines()
+              # A failing test prints its own block; the block is what says
+              # *why* it failed, so every failure line drags its context in.
+              context = set()
+              for i, line in enumerate(body):
+                  if re.search(r"\[E\]|failed to load|Error:", line):
+                      context.update(range(i, min(i + 14, len(body))))
               interesting = [
                   l for l in body
                   if re.search(
@@ -95,6 +101,8 @@ jobs:
                       re.I,
                   )
               ]
+              for i in sorted(context)[:120]:
+                  emit("error", body[i])
               for line in interesting[:80]:
                   emit("error", line)
           PY

@@ -297,6 +297,11 @@ class CoreLaunch {
   ///   carrier is flipped on every other pass — a different carrier means a
   ///   different gateway pool, which is the only lever the client has for
   ///   landing in another country.
+  ///
+  /// [index] is the rung of the *whole search*, not of this pass: the exit
+  /// search hands in `epoch * ladder.length + i`, so index 5 of a five-rung
+  /// ladder is the first rung of the second pass, and the flip has something to
+  /// alternate against.
   static VpnSettings smartVariant(
     VpnSettings base, {
     required int index,
@@ -307,17 +312,24 @@ class CoreLaunch {
     final variant = base.copyWithProtocol(proto);
     final masque = proto == Protocol.masque || proto == Protocol.mim;
     if (base.protocol == Protocol.smart && ladder.length > 1) {
-      if (index == 1) {
+      // The second rung of every pass carries the hidden handshake: it is the
+      // rung that runs after the plain QUIC attempt has already failed.
+      if (index % ladder.length == 1) {
         variant.transport = MasqueTransport.h2;
         variant.fragment = true;
         variant.ech = true;
-      } else if (index > 1 && masque) {
+      } else if (index > 0 && masque) {
         variant.ech = true;
       }
-      if (index >= ladder.length && index.isOdd) {
+      // Past the first pass the carrier alternates, rung by rung, so a network
+      // that keeps landing the tunnel in a country the user filtered out gets a
+      // different gateway pool to choose from. Only the MASQUE family has a
+      // carrier to flip; WireGuard does not.
+      if (masque && index >= ladder.length && index.isOdd) {
         variant.transport = variant.transport == MasqueTransport.h3
             ? MasqueTransport.h2
             : MasqueTransport.h3;
+        if (variant.transport == MasqueTransport.h2) variant.fragment = true;
       }
     }
     if (endpoint != null && endpoint.isNotEmpty) variant.endpoint = endpoint;

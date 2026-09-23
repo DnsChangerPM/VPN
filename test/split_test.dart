@@ -80,10 +80,13 @@ void main() {
     test('private expands to the three LAN ranges for the routing table', () {
       final s = VpnSettings(routeDirect: const ['private', '1.2.3.4']);
       final routes = SplitRules.windowsBypassRoutes(s);
-      expect(routes, contains(['10.0.0.0', '255.0.0.0']));
-      expect(routes, contains(['172.16.0.0', '255.240.0.0']));
-      expect(routes, contains(['192.168.0.0', '255.255.0.0']));
-      expect(routes, contains(['1.2.3.4', '255.255.255.255']));
+      // `equals` is what makes this a comparison of *contents*: two lists are
+      // different objects, and `contains` alone would compare identities.
+      expect(routes, contains(equals(['10.0.0.0', '255.0.0.0'])));
+      expect(routes, contains(equals(['172.16.0.0', '255.240.0.0'])));
+      expect(routes, contains(equals(['192.168.0.0', '255.255.0.0'])));
+      expect(routes, contains(equals(['1.2.3.4', '255.255.255.255'])));
+      expect(routes.length, 4);
     });
 
     test('per-app is Android-only', () {
