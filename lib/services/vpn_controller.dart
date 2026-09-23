@@ -16,7 +16,6 @@ import 'ios_policy.dart';
 import 'platform_engine.dart';
 import 'socks_probe.dart';
 import 'speed.dart';
-import 'split.dart';
 import 'update_service.dart';
 import 'windows_proxy.dart';
 
@@ -1314,15 +1313,6 @@ class VpnController extends ChangeNotifier {
       unawaited(WindowsEngine.instance.stop());
     }
     super.dispose();
-  }
-}
-
-extension on VpnSettings {
-  VpnSettings copyWithProtocol(Protocol protocol, {ExitFilter? exitFilter}) {
-    final json = toJson();
-    json['protocol'] = protocol.name;
-    if (exitFilter != null) json['exitFilter'] = exitFilter.name;
-    return VpnSettings.fromJson(json);
   }
 }
 

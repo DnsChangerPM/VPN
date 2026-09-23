@@ -279,22 +279,6 @@ class _SpeedPageState extends State<SpeedPage> {
 
   // ── helpers ──────────────────────────────────────────────────────────────
 
-  Widget _kv(String key, String value) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(key,
-              style: const TextStyle(fontSize: 11, color: VoidrauColors.muted)),
-          Text(value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
-        ],
-      ),
-    );
-  }
-
   Widget _number(
     VpnController c,
     S s,
