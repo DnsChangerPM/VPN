@@ -127,7 +127,10 @@ class SplitRules {
       for (var i = 0; i < 4; i++)
         (octets[i] & ((mask >> (24 - i * 8)) & 0xff)).toString()
     ];
-    return ['${net.join('.')}', '${(mask >> 24) & 0xff}.${(mask >> 16) & 0xff}.${(mask >> 8) & 0xff}.${mask & 0xff}'];
+    final dotted =
+        '${(mask >> 24) & 0xff}.${(mask >> 16) & 0xff}.'
+        '${(mask >> 8) & 0xff}.${mask & 0xff}';
+    return [net.join('.'), dotted];
   }
 
   /// The direct rules handed to the core on this platform.
