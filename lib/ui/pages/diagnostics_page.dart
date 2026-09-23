@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../app_info.dart';
 import '../../data/countries.dart';
+import '../../l10n/strings.dart';
 import '../../models/engine_state.dart';
 import '../../services/core_args.dart';
 import '../../services/socks_probe.dart';

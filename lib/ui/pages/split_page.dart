@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 
 import '../../l10n/strings.dart';
+import '../../models/engine_state.dart';
 import '../../models/settings.dart';
 import '../../services/split.dart';
 import '../../services/vpn_controller.dart';
@@ -297,14 +298,16 @@ class _SplitPageState extends State<SplitPage> {
                 final inactive = warnOnWindows &&
                     Platform.isWindows &&
                     !SplitRules.windowsRoutable(e);
-                return Chip(
+                final chip = Chip(
                   label: Text(e),
                   backgroundColor:
                       inactive ? VoidrauColors.surface2 : null,
-                  tooltip: inactive ? s.splitWindowsNote : null,
                   onDeleted: () => onRemove(e),
                   deleteIcon: const Icon(Icons.close, size: 16),
                 );
+                return inactive
+                    ? Tooltip(message: s.splitWindowsNote, child: chip)
+                    : chip;
               }).toList(),
             ),
           ),

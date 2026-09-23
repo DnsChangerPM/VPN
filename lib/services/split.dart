@@ -125,7 +125,7 @@ class SplitRules {
     }
     final net = [
       for (var i = 0; i < 4; i++)
-        '${octets[i] & ((mask >> (24 - i * 8)) & 0xff)}'
+        (octets[i] & ((mask >> (24 - i * 8)) & 0xff)).toString()
     ];
     return ['${net.join('.')}', '${(mask >> 24) & 0xff}.${(mask >> 16) & 0xff}.${(mask >> 8) & 0xff}.${mask & 0xff}'];
   }
@@ -186,9 +186,9 @@ class SplitRules {
     final out = <SplitApp>[];
     final seen = <String>{};
     for (final row in raw) {
-      final id = '${row['package'] ?? ''}'.trim();
+      final id = (row['package'] ?? '').trim();
       if (id.isEmpty || !seen.add(id)) continue;
-      final label = '${row['label'] ?? ''}'.trim();
+      final label = (row['label'] ?? '').trim();
       out.add(SplitApp(
         id: id,
         label: label.isEmpty ? id : label,

@@ -334,7 +334,7 @@ class VpnSettings {
 
   /// The HTTP CONNECT listener sits one port above SOCKS5, and only exists when
   /// [httpProxy] is on.
-  String get httpBind => '127.0.0.1:${httpProxyPort}';
+  String get httpBind => '127.0.0.1:$httpProxyPort';
 
   int get httpProxyPort {
     final p = socksPort + 1;

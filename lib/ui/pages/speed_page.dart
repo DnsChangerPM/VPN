@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../l10n/strings.dart';
+import '../../models/engine_state.dart';
 import '../../models/settings.dart';
 import '../../services/vpn_controller.dart';
 import '../../theme/voidrau_theme.dart';
