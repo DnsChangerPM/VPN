@@ -88,6 +88,12 @@ Pushing a `v1.1.0` tag publishes too. Artifacts:
 - `VoidrauVPN-vX.Y.Z-Windows-x64-Portable.zip`
 - `SHA256SUMS.txt`
 
+iOS builds are published separately by **Actions → iOS - Build and TestFlight** with the
+**Publish GitHub Release** step (`publish_release` input): the signed IPA, its
+corresponding source and the checksums land as a **pre-release** tagged `ios-vX.Y.Z`, so
+`releases/latest` — the feed the in-app updater reads — keeps pointing at the
+Android/Windows `v*` release. See [IOS-TESTFLIGHT.md](IOS-TESTFLIGHT.md).
+
 The updater verifies SHA-256 when GitHub provides a digest, and on Android checks that the downloaded APK carries the same signing certificate as the installed app before handing it to the system installer.
 
 ### Build locally
