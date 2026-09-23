@@ -82,9 +82,17 @@ class VpnController extends ChangeNotifier {
   Timer? _promptTimer;
   int _promptAsks = 0;
 
+  /// True when the exit rule is actually in force: on, and not paused by the
+  /// one-tap "connect with the Iran IP" answer.
+  bool get exitRuleEnforced =>
+      !settings.exitRulePaused && settings.exitFilter != ExitFilter.off;
+
+  /// True while the user's rule is remembered but deliberately not enforced.
+  bool get exitRulePaused => settings.exitRulePaused;
+
   /// True when a matching exit country is required before a tunnel is accepted.
   bool get exitFilterActive =>
-      settings.exitFilter != ExitFilter.off && _wantUp && !_userDisconnect;
+      exitRuleEnforced && _wantUp && !_userDisconnect;
 
   /// Human-readable rule, e.g. "Germany → any country except Iran".
   String get exitFilterLabel {
@@ -468,7 +476,7 @@ class VpnController extends ChangeNotifier {
   /// lookup must not turn into an endless re-dial loop.
   static bool matchesExitFilter(String? exitCountry, VpnSettings st) {
     final f = st.exitFilter;
-    if (f == ExitFilter.off) return true;
+    if (f == ExitFilter.off || st.exitRulePaused) return true;
     final c = SocksProbe.countryCode(exitCountry ?? '');
     if (c.isEmpty) return true;
     bool blocked() =>
@@ -518,7 +526,7 @@ class VpnController extends ChangeNotifier {
       }
       final dial = _pendingDial;
       _pendingDial = null;
-      if (settings.exitFilter == ExitFilter.off) {
+      if (!exitRuleEnforced) {
         await _runAttempt(endpoint: dial?.endpoint);
         return;
       }
@@ -557,7 +565,7 @@ class VpnController extends ChangeNotifier {
         epoch++;
         next = null;
         if (outcome == AttemptOutcome.accepted || !_wantUp) return;
-        if (settings.exitFilter == ExitFilter.off) {
+        if (!exitRuleEnforced) {
           // The rule was switched off mid-search (usually by choosing "connect
           // with the Iran IP"): keep going, but now every exit is acceptable.
           if (outcome == AttemptOutcome.rejected) {
@@ -712,7 +720,7 @@ class VpnController extends ChangeNotifier {
       await engine.stop();
     }
     if (!_wantUp) return AttemptOutcome.failed;
-    if (_rejectedExits.isNotEmpty && settings.exitFilter != ExitFilter.off) {
+    if (_rejectedExits.isNotEmpty && exitRuleEnforced) {
       // Tunnels came up, just not where the user wants to land: keep the
       // search honest instead of reporting a dead network. (Once the filter
       // has been switched off mid-search this branch is skipped, so a real
@@ -808,7 +816,7 @@ class VpnController extends ChangeNotifier {
 
   void _armPromptTimer() {
     _promptTimer?.cancel();
-    if (settings.exitFilter == ExitFilter.off) return;
+    if (!exitRuleEnforced) return;
     _exitSearchSince ??= DateTime.now();
     final wait = settings.exitAskAfter <= 0 ? 180 : settings.exitAskAfter;
     _promptTimer = Timer(Duration(seconds: wait), _maybeAsk);
@@ -819,7 +827,7 @@ class VpnController extends ChangeNotifier {
   /// by a stale question.
   void _maybeAsk() {
     if (!_wantUp || _userDisconnect || exitPrompt) return;
-    if (settings.exitFilter == ExitFilter.off) return;
+    if (!exitRuleEnforced) return;
     if (snapshot.phase == EnginePhase.connected) return;
     final since = _exitSearchSince;
     if (since == null) return;
@@ -857,6 +865,20 @@ class VpnController extends ChangeNotifier {
   /// "Keep scanning": the search continues and the question comes back after
   /// another [VpnSettings.exitAskAfter]. When the search had already given up
   /// (max tries reached), it is restarted from scratch.
+  /// The way back from the one-tap answer: the rule was never lost, so this
+  /// just stops pausing it and re-dials until an exit matches again.
+  Future<void> resumeExitRule() async {
+    if (!settings.exitRulePaused) return;
+    settings.exitRulePaused = false;
+    await persist();
+    notifyListeners();
+    _log('exit rule back on: $exitFilterLabel');
+    if (snapshot.isActive || busy) {
+      await disconnect();
+    }
+    await connect();
+  }
+
   Future<void> keepSearchingForExit() async {
     final restart = !busy && !_wantUp;
     _clearExitPrompt();
@@ -872,11 +894,15 @@ class VpnController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// "Connect with the Iran IP": the rule is switched off. When a search is
-  /// still in flight the running attempt is left alone — stopping it mid-dial
-  /// would fight the engine — and the next pass dials the gateway that already
-  /// produced that exit. With nothing running, a connection is started
+  /// "Connect with the Iran IP": the rule is **paused**, not deleted. When a
+  /// search is still in flight the running attempt is left alone — stopping it
+  /// mid-dial would fight the engine — and the next pass dials the gateway that
+  /// already produced that exit. With nothing running, a connection is started
   /// straight away on that same gateway.
+  ///
+  /// Pausing instead of switching the rule off is what keeps "only the local IP
+  /// connects" from becoming permanent: the very next press of [resumeExitRule]
+  /// puts the user's countries back, and so does a new search after the pause.
   Future<void> acceptBlockedExit() async {
     final fb = _fallback;
     final wasSearching = busy || _wantUp;
@@ -884,15 +910,15 @@ class VpnController extends ChangeNotifier {
     _exitTries = 0;
     _rejectedExits.clear();
     _exitSearchSince = null;
-    settings.exitFilter = ExitFilter.off;
+    settings.exitRulePaused = true;
     // Quick reconnect would hand the core the last *foreign* gateway it liked;
     // the user just asked for the Iranian exit instead.
     settings.quickReconnect = false;
     _pendingDial = fb;
     await persist();
     _log(fb == null
-        ? 'exit filter: off — connecting with whatever exit comes up'
-        : 'exit filter: off — redialling ${fb.endpoint.isEmpty ? 'the last gateway' : fb.endpoint}');
+        ? 'exit rule paused — connecting with whatever exit comes up'
+        : 'exit rule paused — redialling ${fb.endpoint.isEmpty ? 'the last gateway' : fb.endpoint}');
     if (wasSearching) return; // the in-flight loop picks _pendingDial up
     if (snapshot.phase == EnginePhase.connected) return; // already up
     _pendingDial = null;

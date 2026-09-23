@@ -137,7 +137,12 @@ class DiagnosticsPage extends StatelessWidget {
           ),
           // The rule the controller is enforcing, plus how far the current
           // search has got — so a long "scanning" phase explains itself.
-          _cell(s.exitFilter, c.exitFilterLabel),
+          _cell(
+            s.exitFilter,
+            c.exitRulePaused
+                ? '${c.exitFilterLabel} · ${s.exitPausedTitle}'
+                : c.exitFilterLabel,
+          ),
           if (c.exitFilterActive)
             _cell(s.scanning, c.exitSearchStatus),
           _cell(s.ping, snap.pingMs == null ? '—' : '${snap.pingMs} ms'),

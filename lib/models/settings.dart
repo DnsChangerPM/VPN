@@ -120,6 +120,7 @@ class VpnSettings {
     // The out-of-the-box rule is "any IP but Iran" (README, exit_filter_test):
     // an unknown stored name must never silently disable the filter either.
     this.exitFilter = ExitFilter.nonIran,
+    this.exitRulePaused = false,
     this.exitPreferred = const ['DE'],
     this.exitBlocked = const ['IR'],
     this.exitAskAfter = 180,
@@ -185,6 +186,15 @@ class VpnSettings {
 
   /// Exit-country rule applied after the tunnel is up.
   ExitFilter exitFilter;
+
+  /// True while the one-tap "connect with the Iran IP" answer is in force.
+  ///
+  /// The rule itself is kept — [exitFilter], [exitPreferred] and [exitBlocked]
+  /// are untouched — but it is not enforced and not handed to the core, so the
+  /// user gets the exit that is actually reachable on this line. Pressing
+  /// "search again" clears this flag, and with it the rule is back exactly as
+  /// it was: choosing the local exit once must never cost the user the rule.
+  bool exitRulePaused;
 
   /// ISO-3166 alpha-2 codes wanted first by [ExitFilter.preferred].
   List<String> exitPreferred;
@@ -382,6 +392,7 @@ class VpnSettings {
         'watchdog': watchdog,
         'orbStyle': orbStyle.name,
         'exitFilter': exitFilter.name,
+        'exitRulePaused': exitRulePaused,
         'exitPreferred': exitPreferred,
         'exitBlocked': exitBlocked,
         'exitAskAfter': exitAskAfter,
@@ -478,6 +489,7 @@ class VpnSettings {
       watchdog: json['watchdog'] != false,
       orbStyle: parse(OrbStyle.values, 'orbStyle', OrbStyle.mercury),
       exitFilter: parse(ExitFilter.values, 'exitFilter', ExitFilter.nonIran),
+      exitRulePaused: json['exitRulePaused'] == true,
       exitPreferred: codes(json['exitPreferred'], const ['DE']),
       exitBlocked: codes(json['exitBlocked'], const ['IR']),
       exitAskAfter: num('exitAskAfter', 180),

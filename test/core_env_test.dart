@@ -98,6 +98,14 @@ void main() {
       expect(e.containsKey('AETHER_EXIT_LOC'), isFalse);
     });
 
+    test('a paused rule is remembered but never sent to the core', () {
+      // "Connect with the Iran IP" pauses the rule: the core must not be told
+      // to refuse the exit the user just asked for, and the countries the user
+      // chose stay in the settings for the one-tap resume.
+      final e = env(VpnSettings(exitRulePaused: true));
+      expect(e.containsKey('AETHER_EXIT_LOC'), isFalse);
+    });
+
     test('with the filter off nothing is sent', () {
       final e = env(VpnSettings(exitFilter: ExitFilter.off));
       expect(e.containsKey('AETHER_EXIT_LOC'), isFalse);

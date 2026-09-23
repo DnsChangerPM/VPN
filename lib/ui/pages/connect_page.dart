@@ -113,6 +113,36 @@ class ConnectPage extends StatelessWidget {
             padding: const EdgeInsets.only(top: 8),
             child: ExitFilterBadge(controller: c),
           ),
+        // The one-tap "connect with the Iran IP" answer used to be permanent:
+        // the rule was switched off and forgotten, which is how a user ends up
+        // with "only the local IP connects". It is a pause now, and this is
+        // where it is both shown and lifted.
+        if (c.exitRulePaused)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(
+              children: [
+                Text(
+                  s.exitPausedTitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: VoidrauColors.coral, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  s.exitPausedBody,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: VoidrauColors.muted, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: c.busy ? null : c.resumeExitRule,
+                  icon: const Icon(Icons.travel_explore, size: 18),
+                  label: Text(s.exitResume),
+                ),
+              ],
+            ),
+          ),
         // Device VPN was asked for but this instance is not elevated: one tap
         // does the UAC relaunch instead of leaving the user to find the exe,
         // close the app and right-click it.

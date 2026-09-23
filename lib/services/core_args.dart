@@ -50,7 +50,7 @@ class CoreLaunch {
   /// never let a blocked exit in — the same rule the client-side filter
   /// applies after the tunnel is up).
   static String? exitLoc(VpnSettings s) {
-    if (!s.coreExitLoc) return null;
+    if (!s.coreExitLoc || s.exitRulePaused) return null;
     final blocked = s.exitBlocked.map((e) => e.toUpperCase()).toList();
     final wanted = s.exitPreferred.map((e) => e.toUpperCase()).toList();
     switch (s.exitFilter) {

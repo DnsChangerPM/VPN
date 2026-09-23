@@ -157,7 +157,11 @@ command-line flags, and the iOS extension's validator only accepts that prefix.
 Two of the usual reports have one honest answer each, and the app tries to give
 the evidence instead of a guess:
 
-- **"Only the Iran IP connects / no other exit IPs exist."** *Diagnostics →
+- **"Only the Iran IP connects / no other exit IPs exist."** The one-tap
+  *connect with the Iran IP* answer pauses the exit rule instead of deleting it,
+  so the countries the user picked are still there and one tap (**turn the rule
+  back on and search**) restores the search. That is what keeps the local exit
+  from quietly becoming the only exit: *Diagnostics →
   Tunnel reality check* reads the public IP twice: once on the raw line
   (deliberately outside every proxy) and once through the tunnel. If the two
   addresses are the same, the traffic the phone sends is not going through the

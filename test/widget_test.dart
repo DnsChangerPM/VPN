@@ -161,6 +161,20 @@ void main() {
     expect(SocksProbe.parseTrace('nothing here')['ip'], isNull);
   });
 
+  test('a paused exit rule survives the settings round trip', () {
+    final s = VpnSettings(
+      exitRulePaused: true,
+      exitPreferred: const ['DE'],
+      exitBlocked: const ['IR', 'RU'],
+    );
+    final back = VpnSettings.fromJson(s.toJson());
+    expect(back.exitRulePaused, isTrue);
+    expect(back.exitPreferred, ['DE']);
+    expect(back.exitBlocked, ['IR', 'RU']);
+    // Not paused is the default, so an older saved blob keeps the old meaning.
+    expect(VpnSettings.fromJson(VpnSettings().toJson()).exitRulePaused, isFalse);
+  });
+
   test('SHA256SUMS parser', () {
     const body = '''
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  VoidrauVPN-v1.2.3-Android-Universal.apk

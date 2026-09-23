@@ -237,6 +237,12 @@ class S {
 
   // ── exit country ─────────────────────────────────────────────────────────
   String get exitFilter => isFa ? 'کشور آی‌پی خروجی' : 'Exit IP country';
+  String get exitPausedTitle =>
+      isFa ? 'قاعدهٔ کشور خروج موقتاً کنار گذاشته شده' : 'Exit rule paused';
+  String get exitPausedBody => isFa
+      ? 'چون یک‌بار «اتصال با آی‌پی ایران» را انتخاب کردید، قاعده فعال نیست؛ اما پاک هم نشده است. با یک ضربه دوباره فعال می‌شود و دنبال کشورهای انتخابی می‌گردد.'
+      : 'Because you once chose "connect with the Iran IP", the rule is not being enforced — but it has not been thrown away. One tap turns it back on and searches for your countries again.';
+  String get exitResume => isFa ? 'فعال کردن دوبارهٔ قاعده و جست‌وجو' : 'Turn the rule back on and search';
   String get exitFilterHelp => isFa
       ? 'پس از اتصال، کشور آی‌پی خروجی بررسی می‌شود؛ اگر مطابق انتخاب شما نبود، تونل بسته و مسیر دیگری امتحان می‌شود.'
       : 'After connecting, the exit IP\'s country is checked; if it is not the one you want, the tunnel is redialled on another route.';

@@ -113,6 +113,9 @@ class ConfigPage extends StatelessWidget {
           'preferred': s.exitPreferred,
         }, (v) {
           st.exitFilter = ExitFilter.values.firstWhere((e) => e.name == v);
+          // Choosing a rule by hand is also the way out of the pause the
+          // one-tap answer left behind.
+          st.exitRulePaused = false;
           c.persist();
         }, wrap: true),
         if (st.exitFilter == ExitFilter.preferred) ...[
@@ -126,6 +129,14 @@ class ConfigPage extends StatelessWidget {
             },
           ),
         ],
+        if (st.exitRulePaused)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 2),
+            child: Text(
+              s.exitPausedBody,
+              style: const TextStyle(color: VoidrauColors.coral, fontSize: 12),
+            ),
+          ),
         if (st.exitFilter != ExitFilter.off) ...[
           _label(s.exitBlockedCountries),
           CountryPickerRow(
